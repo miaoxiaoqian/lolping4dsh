@@ -1,0 +1,206 @@
+{
+  "source": "https://github.com/darrenprx/lolPing",
+  "commit": "2b8cdcb725738cdc4c112b35d06996c438fcc295",
+  "files": [
+    {
+      "path": "textures/assist_me.png",
+      "sha256": "506d91d72e260469fa220d4642734018bbc17149bad730e2e0a2aee71979b722",
+      "bytes": 12160
+    },
+    {
+      "path": "textures/need_vision.png",
+      "sha256": "c421e8a1172cd1c9c5c3a4a0e2b1e7b730ba7bf0519d90adf98824c8b6d78e1d",
+      "bytes": 9567
+    },
+    {
+      "path": "textures/omw.png",
+      "sha256": "b67f8030fcf30aa52faa010433463574c74d9a7214f1e80f9f0e25ac5f4b07d5",
+      "bytes": 8864
+    },
+    {
+      "path": "textures/pingwheel_retreatrender.png",
+      "sha256": "269be035c1f88173a9ec76e4d5f1f5b81ae5f5091655860869563842877b791c",
+      "bytes": 40944
+    },
+    {
+      "path": "emotes/angry_kitty.ogg",
+      "sha256": "f9cde0d6b6ace84e33d8290ab0903da6c118b01f9dace37e831df26d5e4d9deb",
+      "bytes": 19469
+    },
+    {
+      "path": "emotes/angry_kitty.png",
+      "sha256": "2511ca565b1d89b223fb22c5489b47f5aaa50407b0d981d49ce090f6c50b4310",
+      "bytes": 10594
+    },
+    {
+      "path": "emotes/angry_kitty.webp",
+      "sha256": "3ad283b8ee8ca9aeca6095894af508fea7a655890826d2fae078a7709e50b452",
+      "bytes": 930450
+    },
+    {
+      "path": "emotes/come_again.ogg",
+      "sha256": "b74ce222cc7056341c8c68335e3702b0a8768ce7e99432c7619eeb57287651a8",
+      "bytes": 29397
+    },
+    {
+      "path": "emotes/come_again.png",
+      "sha256": "7323af74d1656c6b1d911a950a354c52d4ee5d58094b60fe7a930de1be433a20",
+      "bytes": 14186
+    },
+    {
+      "path": "emotes/come_again.webp",
+      "sha256": "8034c5a771696ec9a0a20c269e075639ed5c8ccccc2a98f69927f29046f80026",
+      "bytes": 892504
+    },
+    {
+      "path": "emotes/facepalm.ogg",
+      "sha256": "4d40ac5132df760dbc2ad4f05f72867e62347c309c8696787e8a7e8bb31ce5da",
+      "bytes": 11473
+    },
+    {
+      "path": "emotes/facepalm.png",
+      "sha256": "1f821115b0c7ccde16396afc1dcef6f094c1ede64573ac5a1a2f3fee8fad9770",
+      "bytes": 12195
+    },
+    {
+      "path": "emotes/facepalm.webp",
+      "sha256": "c2b0165d43ee162275740e551d7a03467ddeb90bda64ffe6852ee9751157f9a5",
+      "bytes": 1208048
+    },
+    {
+      "path": "emotes/gg_heart.ogg",
+      "sha256": "942dac84603a0fc656a0391386fe804bb5ea38816540bbaffbb7b1fa7ae58602",
+      "bytes": 14640
+    },
+    {
+      "path": "emotes/gg_heart.png",
+      "sha256": "d6b4b1a8dd441db6b1913028298ac7a0f4a58ff3ae4b8f5a386e47462dd14922",
+      "bytes": 10710
+    },
+    {
+      "path": "emotes/gg_heart.webp",
+      "sha256": "9e7aba25fd580ace76c62b8423ea894b6cb6f1ae1cd4e3f8bed40217af56327a",
+      "bytes": 1014818
+    },
+    {
+      "path": "emotes/poro_ride.ogg",
+      "sha256": "ebb40144b1d943158a7b1f074d83028f8296b08bbe0206a6c26d4312d095d9b5",
+      "bytes": 23240
+    },
+    {
+      "path": "emotes/poro_ride.png",
+      "sha256": "2d8cf23ce6c8d58f9502643328c9297d14884b76b3d4b720ed4d815c5e31f3b1",
+      "bytes": 14551
+    },
+    {
+      "path": "emotes/poro_ride.webp",
+      "sha256": "0b4f157c45f25e028235dd416077fdf0823c316a040154523c20da957f196ddb",
+      "bytes": 1531840
+    },
+    {
+      "path": "emotes/sad_kitten.ogg",
+      "sha256": "d47445ac21b017d27755fdb40f2cb9c600a222a5ed499b9ab25a95f6e9060b20",
+      "bytes": 14304
+    },
+    {
+      "path": "emotes/sad_kitten.png",
+      "sha256": "ada52083228c08faf3bc631758c07d778d41a147f53a34bd90ec15031980ba3e",
+      "bytes": 10971
+    },
+    {
+      "path": "emotes/sad_kitten.webp",
+      "sha256": "dbe7decc453f0140a4920bfd97b7e477ba5f9dad2b9b13b19dc61d6437eceb0c",
+      "bytes": 1228748
+    },
+    {
+      "path": "emotes/scout_approved.ogg",
+      "sha256": "c2fa1cf5fac0e0063addd282c6d2c5c86554d8354300f249aa1f35df5f6d3a46",
+      "bytes": 28497
+    },
+    {
+      "path": "emotes/scout_approved.png",
+      "sha256": "b337c3d21cd403adba0062b7b9b50aa6d74d7b8d4cfce1858fbb048b81cedeed",
+      "bytes": 12927
+    },
+    {
+      "path": "emotes/scout_approved.webp",
+      "sha256": "92b9704067d6d57dffa9ae7d15903c19447a01067d10740cc46b12d4011715f1",
+      "bytes": 1217654
+    },
+    {
+      "path": "emotes/super_approved.ogg",
+      "sha256": "944857e8d215f62b3d45c7a0cab9f8d56d7b49591ff6c77f91e06b1684934a77",
+      "bytes": 39773
+    },
+    {
+      "path": "emotes/super_approved.png",
+      "sha256": "f6c5ef61e78b673299f491b35c1cde8b89cc81cee0adb036de987c1c22745d70",
+      "bytes": 11886
+    },
+    {
+      "path": "emotes/super_approved.webp",
+      "sha256": "5e7f8933da81760164b3ed0b713692f591a9568a438d8b1c0b26d646657c1bb9",
+      "bytes": 1144604
+    },
+    {
+      "path": "emotes/think_about_it.ogg",
+      "sha256": "50735a1df0fd90fee5f47a3bfa1c5a5ae55ba43c323b70d532f4333b1a72d47a",
+      "bytes": 28837
+    },
+    {
+      "path": "emotes/think_about_it.png",
+      "sha256": "3109c1aa51bebbc47340812d46d4eccf00a91c975aade399483fd44c73817f2f",
+      "bytes": 15809
+    },
+    {
+      "path": "emotes/think_about_it.webp",
+      "sha256": "85de5c33690de20f1b31229472e04a98400114789c8a2e73ea18c79407dbfb0f",
+      "bytes": 1056040
+    },
+    {
+      "path": "emotes/unworthy_cn.ogg",
+      "sha256": "e32db60f40fde0b1247b5d2cb88dbc1ac1b90cde1a1022bdcd5ad85dfbc54e13",
+      "bytes": 8079
+    },
+    {
+      "path": "emotes/unworthy_cn.png",
+      "sha256": "dd84a1795245e2701dc166320521bf9e347e0fbc62a4f81f12bed59706fff1a2",
+      "bytes": 13557
+    },
+    {
+      "path": "emotes/unworthy_cn.webp",
+      "sha256": "db99460270ef1fe987253ec415252ffe60cb3bee928cc14d5162256dcf1b636d",
+      "bytes": 958372
+    },
+    {
+      "path": "sounds/ComeHere.wav",
+      "sha256": "f6cdc7f17be6e39450e0e7cd9d418e78b3e22fd41abd9d80a84b73f779314ba9",
+      "bytes": 467922
+    },
+    {
+      "path": "sounds/Danger.wav",
+      "sha256": "f4e81383452cfd4ad9bf6651748d3f6a33b7a73c48ff58aaebbc91b8ab34b752",
+      "bytes": 434546
+    },
+    {
+      "path": "sounds/OnMyWay.wav",
+      "sha256": "bbc00430b8a919662a9a668a68beedc944b88cd5369241481ae3eb8538851a56",
+      "bytes": 274510
+    },
+    {
+      "path": "sounds/SRP_12.wav",
+      "sha256": "f4e81383452cfd4ad9bf6651748d3f6a33b7a73c48ff58aaebbc91b8ab34b752",
+      "bytes": 434546
+    },
+    {
+      "path": "sounds/SRP_7.wav",
+      "sha256": "aca086b35e4bc6deb577d15b24bfab2b9ccd10912e4a089540d7d8abd446a700",
+      "bytes": 293514
+    },
+    {
+      "path": "sounds/button.wav",
+      "sha256": "6b3ac9d25c14621a0c44aa333a5a3936f19cbbb586fe79fc450cb046fbf06e59",
+      "bytes": 139054
+    }
+  ]
+}

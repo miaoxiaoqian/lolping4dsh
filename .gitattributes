@@ -1,0 +1,2 @@
+# Unified patches contain a required single-space prefix on blank context lines.
+integration/desktop/*.patch whitespace=-blank-at-eol

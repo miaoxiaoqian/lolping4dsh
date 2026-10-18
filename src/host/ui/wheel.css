@@ -1,0 +1,40 @@
+/* League-style radial wheel adapted from darrenprx/lolPing (MIT source code). */
+body.wheel { overflow: hidden; background: transparent; }
+
+.ring { position: absolute; inset: 0; pointer-events: none; }
+.wheel-art {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  opacity: 0;
+  transform: scale(.85);
+  transform-origin: center;
+  transition: opacity .12s ease-out, transform .12s ease-out;
+}
+.ring.open .wheel-art { opacity: 1; transform: scale(1); }
+
+.wedge { transition: fill-opacity .08s linear; }
+.wheel-icon {
+  transition: filter .1s, transform .1s;
+  transform-box: fill-box;
+  transform-origin: center;
+  filter: grayscale(1) sepia(.75) saturate(1.3) brightness(1.15);
+}
+.wheel-icon.emote { filter: none; clip-path: circle(50%); }
+.wheel-icon.hot { filter: none; transform: scale(1.18); }
+.hub { clip-path: circle(50%); }
+.centerTxt { font: 600 15px -apple-system, BlinkMacSystemFont, sans-serif; letter-spacing: 1px; fill: #1fa9e0; }
+
+.feedback {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 40%;
+  z-index: 2;
+  pointer-events: none;
+}
+.feedback img { width: 100%; object-fit: contain; }

@@ -1,0 +1,144 @@
+/* Compact translucent chat surface over Electron's native under-window vibrancy. */
+body.ask {
+  --glass-surface: rgba(26, 29, 35, .12);
+  --glass-raised: rgba(255, 255, 255, .045);
+  --glass-field: rgba(17, 20, 25, .22);
+  --glass-border: rgba(255, 255, 255, .2);
+  display: flex;
+  flex-direction: column;
+  width: calc(100vw - 12px);
+  height: calc(100vh - 12px);
+  min-height: 0;
+  margin: 6px;
+  overflow: hidden;
+  color: var(--fg);
+  background: var(--glass-surface);
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .23), 0 2px 8px rgba(0, 0, 0, .12), inset 0 1px rgba(255, 255, 255, .1);
+}
+
+body.ask > header {
+  flex: 0 0 auto;
+  min-height: 39px;
+  padding: 5px 8px 5px 12px;
+  gap: 5px;
+  background: rgba(255, 255, 255, .025);
+  border-bottom-color: var(--glass-border);
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+}
+body.ask > header button,
+body.ask .log,
+body.ask .composer,
+body.ask .status,
+body.ask .storage,
+body.ask > .msg { -webkit-app-region: no-drag; app-region: no-drag; }
+body.ask > header strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; }
+body.ask button {
+  flex: 0 0 auto;
+  color: var(--fg);
+  background: rgba(255, 255, 255, .06);
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  transition: background-color .12s ease, border-color .12s ease;
+}
+body.ask button:hover { color: var(--fg); background: rgba(255, 255, 255, .18); border-color: rgba(255, 255, 255, .35); }
+body.ask > header .icon { padding: 4px 7px; font-size: 11px; }
+
+.log {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  scrollbar-width: thin;
+}
+
+.turn { max-width: 100%; }
+.turn .body {
+  padding: 8px 10px;
+  border-radius: 11px;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.turn.user .body { background: rgba(69, 140, 219, .22); }
+.turn.feedback .body { padding: 3px 8px; color: var(--dim); font-size: 11px; background: transparent; }
+.turn.assistant .body { background: rgba(20, 24, 30, .08); }
+.turn.assistant .msg { margin-top: 6px; }
+
+body.ask > .status {
+  flex: 0 0 auto;
+  padding: 4px 10px;
+  font-size: 10px;
+  line-height: 1.35;
+  background: transparent;
+  border-top: 1px solid rgba(255, 255, 255, .04);
+  border-bottom: 0;
+}
+.storage {
+  flex: 0 0 auto;
+  max-height: 31px;
+  overflow-y: auto;
+  padding: 2px 10px 5px;
+  color: var(--dim);
+  font-size: 10px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.composer {
+  flex: 0 0 auto;
+  padding: 8px 9px 9px;
+  background: rgba(17, 20, 25, .08);
+  border-top: 1px solid var(--glass-border);
+}
+.attachment { display:flex; align-items:center; gap:6px; margin-bottom:6px; font-size:10px; }
+.attachment img { width:64px; height:42px; object-fit:contain; border:1px solid var(--glass-border); border-radius:6px; }
+.turn .screenshot { display:block; max-width:100%; max-height:160px; object-fit:contain; border-radius:8px; margin-top:6px; }
+.composer textarea {
+  display: block;
+  width: 100%;
+  height: 51px;
+  min-height: 51px;
+  resize: none;
+  padding: 7px 9px;
+  color: var(--fg);
+  background: var(--glass-field);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.composer textarea::placeholder { color: var(--dim); opacity: 1; }
+.composer .row { margin-top: 6px; font-size: 10px; }
+.composer .row .grow { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.composer button { padding: 5px 9px; font-size: 11px; }
+body.ask button.primary { color: #fff; background: rgba(35, 115, 222, .88); border-color: rgba(157, 202, 255, .3); }
+body.ask button.primary:hover { background: rgba(54, 134, 239, .96); }
+body.ask button.danger { border-color: rgba(231, 105, 100, .6); }
+body.ask > .msg { flex: 0 0 auto; margin: 0 10px 8px; }
+
+@media (prefers-color-scheme: light) {
+  body.ask {
+    --glass-surface: rgba(238, 243, 249, .08);
+    --glass-raised: rgba(255, 255, 255, .1);
+    --glass-field: rgba(255, 255, 255, .32);
+    --glass-border: rgba(255, 255, 255, .42);
+    box-shadow: 0 12px 32px rgba(28, 43, 64, .18), 0 2px 8px rgba(28, 43, 64, .09), inset 0 1px rgba(255, 255, 255, .65);
+  }
+  body.ask > header { background: rgba(255, 255, 255, .04); }
+  body.ask button:hover { background: rgba(255, 255, 255, .7); border-color: rgba(125, 143, 167, .38); }
+  .turn.user .body { background: rgba(71, 143, 217, .14); }
+  .turn.assistant .body { background: rgba(255, 255, 255, .08); }
+  body.ask > .status { border-top-color: rgba(75, 94, 119, .06); }
+  .composer { background: rgba(255, 255, 255, .06); }
+}

@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; media-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'">
+    <title>全局轮盘设置</title>
+    <link rel="stylesheet" href="/quick-help/overlay/common.css">
+    <link rel="stylesheet" href="/quick-help/overlay/shell.css">
+  </head>
+  <body class="settings">
+    <header><strong class="grow">全局轮盘设置</strong><button id="close" class="icon" type="button">完成</button></header>
+    <div id="status" class="status"></div>
+    <div id="problem" class="msg err" hidden></div>
+    <div id="ok" class="msg" hidden></div>
+    <section>
+      <h2>快捷键</h2>
+      <label class="field"><span>呼出轮盘</span><input id="hotkey" type="text" spellcheck="false"></label>
+      <label class="field"><span>直接求助快捷键（暂不可用）</span><input id="askhotkey" type="text" spellcheck="false" disabled></label>
+      <label class="check"><input id="spacegesture" type="checkbox"><span>启用裸空格手势（需主动开启）</span></label>
+      <p class="dim">裸空格手势默认关闭以保护普通输入和中文选词。组合键建议 Control+Option+Space；仍请先在本机测试是否与输入法或其他软件冲突。</p>
+    </section>
+    <section>
+      <h2>交互</h2>
+      <label class="field"><span>模式</span><select id="mode"><option value="press">按键打开，移动后点击确认</option><option value="hold">按住触发键，移动后松开确认</option></select></label>
+      <label class="field"><span>图标大小</span><select id="size"></select></label>
+      <label class="field"><span>小窗口位置</span><select id="placement"><option value="pointer">鼠标附近</option><option value="center">屏幕居中</option></select></label>
+      <label class="check"><input id="paused" type="checkbox"><span>暂停全局轮盘</span></label>
+      <label class="check"><input id="keepfocus" type="checkbox"><span>失焦时不隐藏小窗口</span></label>
+      <label class="check"><input id="soundenabled" type="checkbox"><span>播放轮盘音效</span></label>
+      <label class="field"><span>音量</span><input id="soundvolume" type="range" min="0" max="1" step="0.05"></label>
+      <label class="field"><span>记录文件夹</span><input id="recordspath" type="text" placeholder="完整文件夹路径，可选 Obsidian 库内目录"></label>
+      <p class="dim">后续 Markdown 和截图保存到此处，旧文件保留原位；正式会话仍在 DSH快捷求助工作区。</p>
+    </section>
+    <section>
+      <h2>八个槽位</h2>
+      <p class="dim">槽位按原版方向排列：N 危险、NE 弱爆、E 正在路上、SE 问号、S 求助、SW 需要视野、W GG、NW 超赞。</p>
+      <div id="slots" class="slots"></div>
+    </section>
+    <section>
+      <h2>可选表情池</h2>
+      <p class="dim">未绑定业务动作的表情只做预览，不会被当作命令。</p>
+      <div id="pool" class="pool"></div>
+    </section>
+    <script src="/quick-help/overlay/common.js"></script>
+    <script src="/quick-help/overlay/settings.js"></script>
+  </body>
+</html>

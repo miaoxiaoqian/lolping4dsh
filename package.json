@@ -1,0 +1,58 @@
+{
+  "name": "@local/dsh-quick-help",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "LoL-style radial wheel and compact quick-help conversations for DeepSeek Harness",
+  "license": "MIT",
+  "main": "./lib/index.js",
+  "icon": "./assets/textures/pingwheel_retreatrender.png",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-chat"
+      ]
+    }
+  },
+  "scripts": {
+    "build": "node build/build.mjs",
+    "typecheck": "node ./node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
+    "selftest": "node build/selftest.mjs && node build/client-selftest.mjs && node build/panel-selftest.mjs && node build/ui-selftest.mjs && node build/wheel-selftest.mjs && node build/feedback-selftest.mjs && node build/session-selftest.mjs && node build/served-pages-selftest.mjs",
+    "assets:fetch": "node tools/fetch-assets.mjs",
+    "build:native": "zsh native/input-helper/build-helper.sh",
+    "test:native": "node build/native-selftest.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.1",
+    "typescript": "6.0.3",
+    "zod": "4.4.3",
+    "@types/node": "24.13.3",
+    "@types/react": "18.3.31",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "jsdom": "29.1.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/miaoxiaoqian/lolping4dsh.git"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}

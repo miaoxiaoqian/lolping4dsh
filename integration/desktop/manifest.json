@@ -1,0 +1,296 @@
+{
+  "sourceVersion": "0.2.1-alpha.2",
+  "localBaseCommit": "d8950f5ab8974389a20a4ba14aa622b73ca68078",
+  "upstreamTag": "dsh-v0.2.1-alpha.2",
+  "testedAgainst": "Local base and official dsh-v0.2.1-alpha.2: git apply dry-run and file hashes verified; desktop runtime acceptance remains partial.",
+  "files": [
+    {
+      "path": "apps/desktop/README.md",
+      "beforeSha256": "7c776c25853d31f6ec9f97de4ad069e0ed83ef5dbd18b42fcff92a26aaf75365",
+      "afterSha256": "ae549bfd140e246f1dcaa30065b8f0be59dde857cfc7dc57fe227948619224e2",
+      "upstreamBeforeSha256": "97c05df7e4e4d053c89ba0d5cf11094c76e7798fed118211f6a828ce2943ee19",
+      "upstreamAfterSha256": "5afa4acf1b076a07c7d6ff9395f66c43991175c5bb9ff4995f8a6c61c9ff857a"
+    },
+    {
+      "path": "apps/desktop/scripts/electron-builder-config.mjs",
+      "beforeSha256": "3f3b036aef8cff16b130b01c3512a2832473276b7cf9e79e59e648eac4e8c845",
+      "afterSha256": "46887edfead9e19e099f0742f55c57f936683e8e3722436cac2e843a61b8221c",
+      "upstreamBeforeSha256": "3f3b036aef8cff16b130b01c3512a2832473276b7cf9e79e59e648eac4e8c845",
+      "upstreamAfterSha256": "46887edfead9e19e099f0742f55c57f936683e8e3722436cac2e843a61b8221c"
+    },
+    {
+      "path": "apps/desktop/src/directory-picker.ts",
+      "beforeSha256": "1874f5fb229dce75ad6d7c39e0443f6141e95c8b753318e90b516ae2ce5be458",
+      "afterSha256": "8b2bdb13bb0fe3b9726f6fc3347ec44d9c69963a071cf8df4514e285e607d4e4",
+      "upstreamBeforeSha256": "1874f5fb229dce75ad6d7c39e0443f6141e95c8b753318e90b516ae2ce5be458",
+      "upstreamAfterSha256": "8b2bdb13bb0fe3b9726f6fc3347ec44d9c69963a071cf8df4514e285e607d4e4"
+    },
+    {
+      "path": "apps/desktop/src/ipc.ts",
+      "beforeSha256": "b7ee202112d7485c524741ffcfe257c5c4f6dca18281aa5ac01c4510b69c6a08",
+      "afterSha256": "c5cd7cbf02e23500937364d894493fdc96052723c7d4e30bf0be5055447df18f",
+      "upstreamBeforeSha256": "b7ee202112d7485c524741ffcfe257c5c4f6dca18281aa5ac01c4510b69c6a08",
+      "upstreamAfterSha256": "c5cd7cbf02e23500937364d894493fdc96052723c7d4e30bf0be5055447df18f"
+    },
+    {
+      "path": "apps/desktop/src/main.ts",
+      "beforeSha256": "ecee878c3faa9b1b5a304e097a4517d5ab32d9c67f84b47d51b567f166e15c65",
+      "afterSha256": "2c870aff7511e86330cb32da6fea4efbf1b73d3d1008aec109f96e16050cf53c",
+      "upstreamBeforeSha256": "19aae691feeb41e459f2de0c1000f02d6bea02a4b9f5d3c59f3b02b7a628edac",
+      "upstreamAfterSha256": "d76355c36b8eea180593e44765c48a51761ff36abbd1d4c0185a0b67316cd5af"
+    },
+    {
+      "path": "apps/desktop/src/preload-app.ts",
+      "beforeSha256": "a4f56b967a17ebc62e5a5a11284e82a3790b5bddc0a578e227da43cc2d344e19",
+      "afterSha256": "a1e80a0ca575782b5d01139bf2d1b0cec5327a91ae5a002f31122a02cf831f48",
+      "upstreamBeforeSha256": "cff269a4f049d276a44974c3c40008ceb9d6a0b35105a54d6605f7dcf59a64eb",
+      "upstreamAfterSha256": "4f5270fc927d904e56e959c58e620748ec322a5376690c1892bd431f4de79f61"
+    },
+    {
+      "path": "apps/desktop/tests/installer-packaging.spec.ts",
+      "beforeSha256": "0d0574102b6e1c156276eac0c29673925cac2f18cb8a34d7d5a6201d7b4ca39b",
+      "afterSha256": "5a148ab37fd60b9531f1f110ff2655ebf3b35d800b471f3106d8e7f7522cb2d9",
+      "upstreamBeforeSha256": "0d0574102b6e1c156276eac0c29673925cac2f18cb8a34d7d5a6201d7b4ca39b",
+      "upstreamAfterSha256": "5a148ab37fd60b9531f1f110ff2655ebf3b35d800b471f3106d8e7f7522cb2d9"
+    },
+    {
+      "path": "apps/desktop/tests/preload.e2e.ts",
+      "beforeSha256": "2b967f8afd868d2f83dd3b6d2a4c2c264d914ca30ff83a03ecfcee392301196a",
+      "afterSha256": "fa9790b068e7a4f7032feebde40a78a118043e4d5ae400664f8e50898fa2a1df",
+      "upstreamBeforeSha256": "2b967f8afd868d2f83dd3b6d2a4c2c264d914ca30ff83a03ecfcee392301196a",
+      "upstreamAfterSha256": "fa9790b068e7a4f7032feebde40a78a118043e4d5ae400664f8e50898fa2a1df"
+    },
+    {
+      "path": "apps/desktop/tsdown.config.ts",
+      "beforeSha256": "3400c9e70f038dddd55142fd5cdaadd9fc9181930b952d854f9a829bdc00ff58",
+      "afterSha256": "fd5a5210f7651ea96959c0d74ba40ce019da21066b1536b113332254a64c2a44",
+      "upstreamBeforeSha256": "3400c9e70f038dddd55142fd5cdaadd9fc9181930b952d854f9a829bdc00ff58",
+      "upstreamAfterSha256": "fd5a5210f7651ea96959c0d74ba40ce019da21066b1536b113332254a64c2a44"
+    },
+    {
+      "path": "packages/client/ui-chat/src/client/chat/TurnTriggerNodeView.module.css",
+      "beforeSha256": "b8bfb0760331cad4e0a98cbf5760abd22e160176e88525b85b266f71a2fd272c",
+      "afterSha256": "c9434a0a884cd19f095d17bbe08aff60dadd23318fae1c05ee42ab2a529b610c",
+      "upstreamBeforeSha256": "b8bfb0760331cad4e0a98cbf5760abd22e160176e88525b85b266f71a2fd272c",
+      "upstreamAfterSha256": "c9434a0a884cd19f095d17bbe08aff60dadd23318fae1c05ee42ab2a529b610c"
+    },
+    {
+      "path": "packages/client/ui-chat/src/client/chat/TurnTriggerNodeView.tsx",
+      "beforeSha256": "52e4d1e567edb65e848bd2e174b68934636631e29350ad044c1d7439ff9e654f",
+      "afterSha256": "de9493b43b1ca23a22ef40f47ff67d863736ab335a3cf28570601c405dcac5f5",
+      "upstreamBeforeSha256": "52e4d1e567edb65e848bd2e174b68934636631e29350ad044c1d7439ff9e654f",
+      "upstreamAfterSha256": "de9493b43b1ca23a22ef40f47ff67d863736ab335a3cf28570601c405dcac5f5"
+    },
+    {
+      "path": "packages/client/ui-conversation/README.md",
+      "beforeSha256": "50ace8f2ba5a7c6788146d4c47b5419f2329c4580b107387b7a16c690225a1d6",
+      "afterSha256": "da5bc9fcaef5f3b4e0b4bf993844c272efa02c11a72e994240cca6d011fea0fa",
+      "upstreamBeforeSha256": "50ace8f2ba5a7c6788146d4c47b5419f2329c4580b107387b7a16c690225a1d6",
+      "upstreamAfterSha256": "da5bc9fcaef5f3b4e0b4bf993844c272efa02c11a72e994240cca6d011fea0fa"
+    },
+    {
+      "path": "packages/client/ui-conversation/README.zh.md",
+      "beforeSha256": "4699186c1b143a34aa833b1af3c627721231e8bc5b3ef502fc09b5aeda3de25d",
+      "afterSha256": "32c3c1561f3dde9bbba964fdb5e751484de90cecfd6e1c04836393a894930060",
+      "upstreamBeforeSha256": "4699186c1b143a34aa833b1af3c627721231e8bc5b3ef502fc09b5aeda3de25d",
+      "upstreamAfterSha256": "32c3c1561f3dde9bbba964fdb5e751484de90cecfd6e1c04836393a894930060"
+    },
+    {
+      "path": "packages/client/ui-conversation/src/client/contract/slots.ts",
+      "beforeSha256": "83fd5ac902dc4d89e5821867415fc9f0a7d4be996550f245d1d0a64826e6eb27",
+      "afterSha256": "b47da3890ee8fb5f217d79826c0d879e40107caa4ef6f0f921436c18f94f6e1b",
+      "upstreamBeforeSha256": "07b3d2fd5eb14e217e24e3b54a7f7be8aa6debd02b435aff8c989d44bcc318b0",
+      "upstreamAfterSha256": "ffeb2fe13a9039d17e863a49d8abe662b52e082c6c03dc67fb6ec174400dc2dd"
+    },
+    {
+      "path": "packages/client/ui-conversation/src/client/locales.ts",
+      "beforeSha256": "a3e742a0a5a067fb5c5b44fa8baede83f3c30785aead80bd89e5186267f6693c",
+      "afterSha256": "53ef8f72ba44ebd179d220343a1e2f1c337fd07a1aa92f6ac18fd87b25ea44be",
+      "upstreamBeforeSha256": "a3e742a0a5a067fb5c5b44fa8baede83f3c30785aead80bd89e5186267f6693c",
+      "upstreamAfterSha256": "53ef8f72ba44ebd179d220343a1e2f1c337fd07a1aa92f6ac18fd87b25ea44be"
+    },
+    {
+      "path": "packages/client/ui-conversation/src/client/skeleton/ConversationContent.tsx",
+      "beforeSha256": "3dfcc635e128f9b798673ba4dfb91a5e25ef96d001124603c672e7beafefa204",
+      "afterSha256": "5fa9e567ffc5163f8ab0839583000570c55aab1696456b2bd12c0e0071b1b75b",
+      "upstreamBeforeSha256": "3dfcc635e128f9b798673ba4dfb91a5e25ef96d001124603c672e7beafefa204",
+      "upstreamAfterSha256": "5fa9e567ffc5163f8ab0839583000570c55aab1696456b2bd12c0e0071b1b75b"
+    },
+    {
+      "path": "packages/client/ui-conversation/src/client/skeleton/ConversationMainPanel.tsx",
+      "beforeSha256": "8329a313114dd3b37842068354dd1cb33327e0a06d2a5bc04108dd7579aabef1",
+      "afterSha256": "1d6d6391fa38bf093fbe2812f3e000da97a9479e3278a14fe54f034f3876c31c",
+      "upstreamBeforeSha256": "8329a313114dd3b37842068354dd1cb33327e0a06d2a5bc04108dd7579aabef1",
+      "upstreamAfterSha256": "1d6d6391fa38bf093fbe2812f3e000da97a9479e3278a14fe54f034f3876c31c"
+    },
+    {
+      "path": "packages/client/ui-conversation/src/client/skeleton/ConversationRoot.module.css",
+      "beforeSha256": "d9d856868adfdc8a300600e060e6262afa42fc3bfc8019b5a597dec326b0c59c",
+      "afterSha256": "22b6a583a41c233844f5725ca8181966bf2e287a8b34d05e097fd26fe5594c27",
+      "upstreamBeforeSha256": "d9d856868adfdc8a300600e060e6262afa42fc3bfc8019b5a597dec326b0c59c",
+      "upstreamAfterSha256": "22b6a583a41c233844f5725ca8181966bf2e287a8b34d05e097fd26fe5594c27"
+    },
+    {
+      "path": "packages/client/ui-conversation/src/client/skeleton/InputBar.module.css",
+      "beforeSha256": "3728d67da4e1d1c2dd102d66f42f0c129a5c1e17e6a1167d738c999d0d87f60b",
+      "afterSha256": "686cf46211e4b140f1ac717583539745d0f24bdb1ebccb50e77b1793458c67a4",
+      "upstreamBeforeSha256": "3728d67da4e1d1c2dd102d66f42f0c129a5c1e17e6a1167d738c999d0d87f60b",
+      "upstreamAfterSha256": "686cf46211e4b140f1ac717583539745d0f24bdb1ebccb50e77b1793458c67a4"
+    },
+    {
+      "path": "packages/client/ui-conversation/src/client/skeleton/InputBar.tsx",
+      "beforeSha256": "0ad3522921b4ba58346e052fa6ec10e64b514a64d51d8a85d5ac748f5ea8065d",
+      "afterSha256": "19eb2bbc7fedd054ad9c327dedce82236abb13c0802c09d69bdf4691539af086",
+      "upstreamBeforeSha256": "0ad3522921b4ba58346e052fa6ec10e64b514a64d51d8a85d5ac748f5ea8065d",
+      "upstreamAfterSha256": "19eb2bbc7fedd054ad9c327dedce82236abb13c0802c09d69bdf4691539af086"
+    },
+    {
+      "path": "packages/client/ui-layout/README.i18n.yaml",
+      "beforeSha256": "53e94aea5122d543b909b5f59d379ca0e5d661cb31a1c820bd0c163b980d60b3",
+      "afterSha256": "c67164308fc396ca0119b05398aca3f29c8795c0eee7c22011062ce23b5ebb76",
+      "upstreamBeforeSha256": "53e94aea5122d543b909b5f59d379ca0e5d661cb31a1c820bd0c163b980d60b3",
+      "upstreamAfterSha256": "c67164308fc396ca0119b05398aca3f29c8795c0eee7c22011062ce23b5ebb76"
+    },
+    {
+      "path": "packages/client/ui-layout/README.md",
+      "beforeSha256": "ad1192655cbdc59794f1f448afcac09e411b487c338f0c2bcec27719f766adb3",
+      "afterSha256": "7c0460255e0fa994888d50e8f1bcbe67cbf1a928f8cfbe9ef1f9e05079caf7a9",
+      "upstreamBeforeSha256": "ad1192655cbdc59794f1f448afcac09e411b487c338f0c2bcec27719f766adb3",
+      "upstreamAfterSha256": "7c0460255e0fa994888d50e8f1bcbe67cbf1a928f8cfbe9ef1f9e05079caf7a9"
+    },
+    {
+      "path": "packages/client/ui-layout/README.zh.md",
+      "beforeSha256": "c9ad17ac0fd5d5eb5a8efd6a920f2b32120a0ad90de674eb44f97a3de06c0838",
+      "afterSha256": "98f855d36ef16bb3f5b83603c5248e80a40662c33e5dd7ec05817fb1f34872f3",
+      "upstreamBeforeSha256": "c9ad17ac0fd5d5eb5a8efd6a920f2b32120a0ad90de674eb44f97a3de06c0838",
+      "upstreamAfterSha256": "98f855d36ef16bb3f5b83603c5248e80a40662c33e5dd7ec05817fb1f34872f3"
+    },
+    {
+      "path": "packages/client/ui-layout/src/client/AppFrame.module.css",
+      "beforeSha256": "f0bce7eb34595a249c7865b5e0542cfae175a50804060af46344aba906e6789c",
+      "afterSha256": "2e5142eb79064cc6db435f6b25632482837dcb0323c6c4cbac5537d2d202f740",
+      "upstreamBeforeSha256": "f0bce7eb34595a249c7865b5e0542cfae175a50804060af46344aba906e6789c",
+      "upstreamAfterSha256": "2e5142eb79064cc6db435f6b25632482837dcb0323c6c4cbac5537d2d202f740"
+    },
+    {
+      "path": "packages/client/ui-layout/src/client/AppFrame.tsx",
+      "beforeSha256": "c45f1ed8ba134bba265af4ac1f9786067f686b8572a13e3617d489cf929644ea",
+      "afterSha256": "7c52d3db555f1bdb6242256f7ce76748eee6edaf69980d0f6658c2e831a6a1b8",
+      "upstreamBeforeSha256": "c45f1ed8ba134bba265af4ac1f9786067f686b8572a13e3617d489cf929644ea",
+      "upstreamAfterSha256": "7c52d3db555f1bdb6242256f7ce76748eee6edaf69980d0f6658c2e831a6a1b8"
+    },
+    {
+      "path": "packages/client/ui-layout/src/client/index.ts",
+      "beforeSha256": "ab1cdd016582d3f2b7c978ec0afa994a8636390cc18cef800d8301d239d46b9e",
+      "afterSha256": "a9b7fb19de108544ffec07f46ce61c5093a8fc3408db745324cd96042c23c08a",
+      "upstreamBeforeSha256": "ab1cdd016582d3f2b7c978ec0afa994a8636390cc18cef800d8301d239d46b9e",
+      "upstreamAfterSha256": "a9b7fb19de108544ffec07f46ce61c5093a8fc3408db745324cd96042c23c08a"
+    },
+    {
+      "path": "packages/client/ui-layout/src/client/shortcut-locales.ts",
+      "beforeSha256": "4b1d030f40d90d530be297e0509506513f98a7e482c04f0f237615cdc0099782",
+      "afterSha256": "a74f43241b9f3265687c742bda171f1c0bc17a2db2076db93c6768007e5762a7",
+      "upstreamBeforeSha256": "4b1d030f40d90d530be297e0509506513f98a7e482c04f0f237615cdc0099782",
+      "upstreamAfterSha256": "a74f43241b9f3265687c742bda171f1c0bc17a2db2076db93c6768007e5762a7"
+    },
+    {
+      "path": "packages/client/ui-layout/tests/app-frame.client.spec.tsx",
+      "beforeSha256": "2914df6faa9a6bcfceef2b96f71827218390b34491058a981805f13a2e5b90d9",
+      "afterSha256": "73a6c96ca2ce8caa76d5e5f65f084e40462f3410134083d4054b6ed1a38d9a86",
+      "upstreamBeforeSha256": "2914df6faa9a6bcfceef2b96f71827218390b34491058a981805f13a2e5b90d9",
+      "upstreamAfterSha256": "73a6c96ca2ce8caa76d5e5f65f084e40462f3410134083d4054b6ed1a38d9a86"
+    },
+    {
+      "path": "packages/client/ui-layout/tests/apply.client.spec.ts",
+      "beforeSha256": "52cbd4e06144cd46458135c1f58c4b2d38180632ea8dbfd05d65174debf9b7ea",
+      "afterSha256": "9560e6940fcf2cad482438ac88de35c19824c1091595928ee99a410482f422ce",
+      "upstreamBeforeSha256": "52cbd4e06144cd46458135c1f58c4b2d38180632ea8dbfd05d65174debf9b7ea",
+      "upstreamAfterSha256": "9560e6940fcf2cad482438ac88de35c19824c1091595928ee99a410482f422ce"
+    },
+    {
+      "path": "packages/client/ui-workspace/README.md",
+      "beforeSha256": "89948e9a30c41a5b75a5197a6b7bdf0d971db9b8fb20d79f25c42956c9ed3c43",
+      "afterSha256": "b260bc41ba9980610795fe1dc4fbe636bbab3a1204e8c9450ca7544f4ba1f6ff",
+      "upstreamBeforeSha256": "89948e9a30c41a5b75a5197a6b7bdf0d971db9b8fb20d79f25c42956c9ed3c43",
+      "upstreamAfterSha256": "b260bc41ba9980610795fe1dc4fbe636bbab3a1204e8c9450ca7544f4ba1f6ff"
+    },
+    {
+      "path": "packages/client/ui-workspace/README.zh.md",
+      "beforeSha256": "262ae55f3c68e1cb09cf65ad854ab984c7efa7a06b29188f7ce0dd1258b71490",
+      "afterSha256": "e190b2118048f036316e104678449c557088947215a80ef7a897db7ba4f967a9",
+      "upstreamBeforeSha256": "262ae55f3c68e1cb09cf65ad854ab984c7efa7a06b29188f7ce0dd1258b71490",
+      "upstreamAfterSha256": "e190b2118048f036316e104678449c557088947215a80ef7a897db7ba4f967a9"
+    },
+    {
+      "path": "packages/client/ui-workspace/src/client/navigation.ts",
+      "beforeSha256": "8b974b00621570b1b5506f2eab88f43d91922ef695c5325a1dd2bdd511fb5525",
+      "afterSha256": "b8a133a13773f2df47f394df5f7c7993c525ca477f89f618881d57b112c3d8bd",
+      "upstreamBeforeSha256": "8b974b00621570b1b5506f2eab88f43d91922ef695c5325a1dd2bdd511fb5525",
+      "upstreamAfterSha256": "b8a133a13773f2df47f394df5f7c7993c525ca477f89f618881d57b112c3d8bd"
+    },
+    {
+      "path": "packages/client/ui-workspace/tests/apply.client.spec.ts",
+      "beforeSha256": "9e5d3fee77793301ffd0d776da1f553f5d32d8ae40bc3b4f4b5b463f61ef55d7",
+      "afterSha256": "bf43f918f3882a9d2a6c5045c16131ec0cdced386e70ef4926d08a5cae8bcd09",
+      "upstreamBeforeSha256": "9e5d3fee77793301ffd0d776da1f553f5d32d8ae40bc3b4f4b5b463f61ef55d7",
+      "upstreamAfterSha256": "bf43f918f3882a9d2a6c5045c16131ec0cdced386e70ef4926d08a5cae8bcd09"
+    },
+    {
+      "path": "apps/desktop/src/preload-quick-help.ts",
+      "beforeSha256": null,
+      "afterSha256": "d461001558cfa943b8cbf0f48d217bf5df6c8a246962c2d2e95846b0f6f4770d",
+      "upstreamBeforeSha256": null,
+      "upstreamAfterSha256": "d461001558cfa943b8cbf0f48d217bf5df6c8a246962c2d2e95846b0f6f4770d"
+    },
+    {
+      "path": "apps/desktop/src/quick-help-ipc.ts",
+      "beforeSha256": null,
+      "afterSha256": "60fd79ac8d94eb8f7068f3f6cc2f07cb27d5aaaf6c7a5251c58a782d8a0fc90a",
+      "upstreamBeforeSha256": null,
+      "upstreamAfterSha256": "60fd79ac8d94eb8f7068f3f6cc2f07cb27d5aaaf6c7a5251c58a782d8a0fc90a"
+    },
+    {
+      "path": "apps/desktop/src/quick-help-position.ts",
+      "beforeSha256": null,
+      "afterSha256": "b24e91c120d4e5513b9a61b6adebf0e71c872cfeffb78daf2e8968bb3597aaec",
+      "upstreamBeforeSha256": null,
+      "upstreamAfterSha256": "b24e91c120d4e5513b9a61b6adebf0e71c872cfeffb78daf2e8968bb3597aaec"
+    },
+    {
+      "path": "apps/desktop/src/quick-help-wiring.ts",
+      "beforeSha256": null,
+      "afterSha256": "10c63f5a86fda8750b5046ecfc9b62b16aefabd0582733ef6a1e00ff17ad49ba",
+      "upstreamBeforeSha256": null,
+      "upstreamAfterSha256": "10c63f5a86fda8750b5046ecfc9b62b16aefabd0582733ef6a1e00ff17ad49ba"
+    },
+    {
+      "path": "apps/desktop/src/quick-help.ts",
+      "beforeSha256": null,
+      "afterSha256": "2bcff0c4211dc0455ad0ab089504a2cfbf8247b1660555cb6f2acfcead8a8d8e",
+      "upstreamBeforeSha256": null,
+      "upstreamAfterSha256": "2bcff0c4211dc0455ad0ab089504a2cfbf8247b1660555cb6f2acfcead8a8d8e"
+    },
+    {
+      "path": "apps/desktop/tests/quick-help.spec.ts",
+      "beforeSha256": null,
+      "afterSha256": "4ca9fd4c42bf04e39dd14221676a81925fb147fecdf853e05f1ae290d2f2be0a",
+      "upstreamBeforeSha256": null,
+      "upstreamAfterSha256": "4ca9fd4c42bf04e39dd14221676a81925fb147fecdf853e05f1ae290d2f2be0a"
+    },
+    {
+      "path": "apps/desktop/tests/quick-help-position.spec.ts",
+      "beforeSha256": null,
+      "afterSha256": "45727a592975b7d6a98d3ad6f45c7a17feededf24f414bac61eb4e0be91a5462",
+      "upstreamBeforeSha256": null,
+      "upstreamAfterSha256": "45727a592975b7d6a98d3ad6f45c7a17feededf24f414bac61eb4e0be91a5462"
+    },
+    {
+      "path": "packages/client/ui-conversation/src/client/compact.ts",
+      "beforeSha256": null,
+      "afterSha256": "65177734a65ad60a378c2026c194fba0a6168fb98c85b1ea6a0582d24ece18a8",
+      "upstreamBeforeSha256": null,
+      "upstreamAfterSha256": "65177734a65ad60a378c2026c194fba0a6168fb98c85b1ea6a0582d24ece18a8"
+    }
+  ],
+  "officialTagDryRunPassed": true
+}

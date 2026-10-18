@@ -1,0 +1,10 @@
+# @local/dsh-quick-help bundle patch.
+#
+# One Host row carries the whole plugin: the wheel's action registry, the quick
+# ask session manager, the settings store, and the HTTP surface that serves both
+# the panel and the three overlay pages. The browser half follows the package's
+# `exports["./client"]`, declared in package.json under `dsh.client`, so no
+# Client row is listed here.
+- insert:
+    - id: quick-help
+      name: '@local/dsh-quick-help'

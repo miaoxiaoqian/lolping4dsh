@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; media-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'">
+    <title>全局轮盘</title>
+    <link rel="stylesheet" href="/quick-help/overlay/common.css">
+    <link rel="stylesheet" href="/quick-help/overlay/wheel.css">
+  </head>
+  <body class="wheel">
+    <div id="hint" class="hint" hidden></div>
+    <div id="ring" class="ring" hidden>
+      <svg id="wheel-art" class="wheel-art" viewBox="-300 -300 600 600" role="group" aria-label="League 风格轮盘">
+        <defs>
+          <radialGradient id="wheel-ext" cx="0" cy="0" r="288" gradientUnits="userSpaceOnUse">
+            <stop offset="0.65278" stop-color="#5c6066" stop-opacity=".55"/><stop offset="1" stop-color="#5c6066" stop-opacity="0"/>
+          </radialGradient>
+          <radialGradient id="wheel-ring" cx="0" cy="0" r="188" gradientUnits="userSpaceOnUse">
+            <stop offset="0.45745" stop-color="#2a2d31"/><stop offset="1" stop-color="#4a4e54"/>
+          </radialGradient>
+          <radialGradient id="wheel-hot" cx="0" cy="0" r="288" gradientUnits="userSpaceOnUse">
+            <stop offset="0.29861" stop-color="#8a8f96"/><stop offset="0.65278" stop-color="#9aa0a8"/><stop offset="1" stop-color="#9aa0a8" stop-opacity="0"/>
+          </radialGradient>
+          <radialGradient id="wheel-core" cx="0" cy="-10" r="86" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#2c5d60"/><stop offset="1" stop-color="#11292c"/>
+          </radialGradient>
+        </defs>
+        <g id="wheel-extensions"></g>
+        <circle r="137" fill="none" stroke="url(#wheel-ring)" stroke-width="102" opacity=".92"></circle>
+        <g id="wheel-slices"></g>
+        <g id="wheel-dividers"></g>
+        <g id="wheel-icons"></g>
+        <circle r="90" fill="none" stroke="#1a1a1a" stroke-width="6" opacity=".6"></circle>
+        <circle r="86" fill="url(#wheel-core)" stroke="#c8aa6e" stroke-width="3"></circle>
+        <circle r="79" fill="none" stroke="#8a7448" stroke-width="1" opacity=".6"></circle>
+        <image id="wheel-hub" x="-20" y="-58" width="40" height="40" class="hub"></image>
+        <text id="centre-title" x="0" y="6" text-anchor="middle" class="centerTxt">PING</text>
+      </svg>
+    </div>
+    <div id="feedback" class="feedback" hidden><img id="feedback-img" alt=""></div>
+    <script src="/quick-help/overlay/common.js"></script>
+    <script src="/quick-help/overlay/wheel.js"></script>
+  </body>
+</html>

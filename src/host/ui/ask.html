@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; media-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'">
+    <title>快捷求助</title>
+    <link rel="stylesheet" href="/quick-help/overlay/common.css">
+    <link rel="stylesheet" href="/quick-help/overlay/shell.css">
+    <link rel="stylesheet" href="/quick-help/overlay/ask.css">
+  </head>
+  <body class="ask">
+    <header>
+      <strong id="task" class="grow">快捷问答</strong>
+      <button id="pin" class="icon" type="button" title="固定窗口">固定</button>
+      <button id="settings" class="icon" type="button" title="设置">设置</button>
+      <button id="close" class="icon" type="button" title="关闭（Esc 隐藏并保留草稿）">关闭</button>
+    </header>
+    <div id="banner" class="msg warn" hidden></div>
+    <div id="log" class="log" role="log" aria-live="polite"></div>
+    <div id="status" class="status"></div>
+    <div class="composer">
+      <div id="attachment" class="attachment" hidden>
+        <img id="attachment-image" alt="待发送截图">
+        <span>截图尚未发送</span>
+        <button id="remove-image" type="button">移除</button>
+      </div>
+      <textarea id="input" rows="3" placeholder="说点什么。Enter 发送，Shift+Enter 换行。"></textarea>
+      <div class="row">
+        <span id="route" class="dim grow"></span>
+        <button id="capture" type="button" title="框选截图，预览后发送">截图</button>
+        <button id="upload" type="button" title="选择 PNG 图片，预览后发送">图片</button>
+        <input id="image-file" type="file" accept="image/png" hidden>
+        <button id="stop" type="button" class="danger" hidden>停止</button>
+        <button id="copy" type="button" hidden>复制</button>
+        <button id="new" type="button">新问题</button>
+        <button id="send" type="button" class="primary" hidden>发送</button>
+      </div>
+    </div>
+    <div id="problem" class="msg err" hidden></div>
+    <script src="/quick-help/overlay/common.js"></script>
+    <script src="/quick-help/overlay/ask.js"></script>
+  </body>
+</html>

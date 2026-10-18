@@ -1,0 +1,45 @@
+/*
+ * Structure shared by the ask and settings windows.
+ *
+ * The wheel is excluded on purpose: it is a square overlay positioned entirely by
+ * its own ring styles, and inheriting padding here would offset the very
+ * coordinates the native helper reported.
+ */
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+header strong { font-size: 13px; }
+
+section { padding: 12px; border-bottom: 1px solid var(--line); }
+section h2 { margin: 0 0 8px; font-size: 12px; color: var(--dim); font-weight: 600; }
+section p { margin: 6px 0 0; font-size: 11px; line-height: 1.5; }
+
+.status {
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--dim);
+  border-bottom: 1px solid var(--line);
+}
+
+.field { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 12px; }
+.field > span { flex: 0 0 160px; color: var(--dim); }
+.field input, .field select { flex: 1; min-width: 0; }
+
+.check { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 12px; }
+.check input { width: auto; }
+
+button.small { padding: 3px 8px; font-size: 11px; }
+button.primary { background: var(--accent); color: #fff; border-color: transparent; }
+button.danger { border-color: #b3453f; }
+button.icon { padding: 4px 8px; font-size: 11px; }
+
+.slots, .pool { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.slotrow { display: flex; align-items: center; gap: 8px; padding: 6px; border: 1px solid var(--line); border-radius: 8px; }
+.slotrow img { width: 32px; height: 32px; object-fit: contain; flex: 0 0 auto; }
+.slotrow .grow { font-size: 12px; }
+.slotrow small { display: block; margin-top: 2px; font-size: 11px; }

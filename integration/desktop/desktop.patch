@@ -1,0 +1,3429 @@
+diff --git a/apps/desktop/README.md b/apps/desktop/README.md
+--- a/apps/desktop/README.md
++++ b/apps/desktop/README.md
+@@ -564,3 +564,5 @@
+ ## Dev Note
+ 
+ Pre-launch CDN and capacity decisions are tracked in the [Desktop update proposal](../../.agents/notes/proposed/feature/2026-09-08-desktop-update-policy-and-installation.md#cdn-and-capacity-qualification).
++
++Quick Help opens a preset-composed formal Session in the full Client with a compact layout. Only the dedicated overlay preload supplies its Session identity; Host WebSocket authentication and native actions validate the exact owned window and top frame. Feedback effects use a separate click-through window positioned beside the visible chat.
+diff --git a/apps/desktop/scripts/electron-builder-config.mjs b/apps/desktop/scripts/electron-builder-config.mjs
+--- a/apps/desktop/scripts/electron-builder-config.mjs
++++ b/apps/desktop/scripts/electron-builder-config.mjs
+@@ -1,6 +1,6 @@
+ import { officePackageDirectories } from '../../../scripts/libreoffice-packages.mjs'
+ import { X509Certificate } from 'node:crypto'
+-import { readFileSync } from 'node:fs'
++import { existsSync, readFileSync } from 'node:fs'
+ import { readFile } from 'node:fs/promises'
+ import { join, relative, sep } from 'node:path'
+ import { fileURLToPath } from 'node:url'
+@@ -60,6 +60,15 @@
+   const unsigned = env.DSH_DESKTOP_UNSIGNED === '1'
+   const packagesMacOS = targetPlatform === 'darwin' || (targetPlatform === undefined && hostPlatform === 'darwin')
+   const packagesWindows = resolvedPlatform === 'win32'
++
++  // The quick-help input helper, built separately because it is native code.
++  // It is absent on Windows (the helper is macOS-only) and absent whenever the
++  // plugin's build has not run; `resolveQuickHelpHelper` reports that at runtime
++  // rather than the packager failing the whole build over an optional feature.
++  // `scripts/` inside `apps/desktop`, so four levels up is `~/Documents`, where the
++  // sibling plugin packages live.
++  const quickHelpCandidate = join(env.DSH_QUICK_HELP_ROOT ?? fileURLToPath(new URL('../../../../lolping4dsh/', import.meta.url)), 'build', 'input-helper')
++  const quickHelpHelper = resolvedPlatform === 'darwin' && existsSync(quickHelpCandidate) ? quickHelpCandidate : undefined
+   const policy = packagesMacOS && unsigned ? undefined : resolveDesktopPolicyEnvironment(env)
+   if (resolvedPlatform === 'win32') installWindowsDirectoryInstaller()
+   const macOSSigning = packagesMacOS && !unsigned ? resolveMacOSSigningEnvironment(env) : undefined
+@@ -131,6 +140,7 @@
+       'lib/preload-app.cjs',
+       'lib/preload-mandatory.cjs',
+       'lib/preload-platform-account.cjs',
++      'lib/preload-quick-help.cjs',
+       'lib/preload-update-dialog.cjs',
+       'lib/preload-welcome.cjs',
+       'renderer/**/*',
+@@ -145,6 +155,11 @@
+       { from: fileURLToPath(new URL('../resources/icon-windows.png', import.meta.url)), to: 'icon.png' },
+       // Windows tray bitmaps; macOS keeps the Dock and ships no menu bar icon.
+       ...(packagesWindows ? [{ from: fileURLToPath(new URL('../resources/tray-windows.ico', import.meta.url)), to: 'tray.ico' }] : []),
++      // The native input helper the quick-help wheel spawns. It lives outside the
++      // asar because it is a separate architecture-specific executable that the
++      // main process runs directly, and `resolveQuickHelpHelper` looks for exactly
++      // this path in a packaged build. Absent on Windows: the helper is macOS-only.
++      ...(quickHelpHelper === undefined ? [] : [{ from: quickHelpHelper, to: 'quick-help/input-helper' }]),
+     ],
+     mac: {
+       icon: fileURLToPath(new URL('../resources/icon-macos.png', import.meta.url)),
+@@ -159,7 +174,7 @@
+       entitlements: fileURLToPath(new URL('./macos-entitlements.plist', import.meta.url)),
+       entitlementsInherit: fileURLToPath(new URL('./macos-entitlements.plist', import.meta.url)),
+       // Prepared runtime files retain their signatures; PAK resources are sealed by their enclosing bundle.
+-      signIgnore: ['/Contents/Resources/app\\.asar\\.unpacked/dsh(?:/|$)', '/Contents/Resources/runtime/primary-runtime(?:/|$)', '\\.pak$'],
++      signIgnore: ['/Contents/Resources/app\\.asar\\.unpacked/dsh(?:/|$)', '/Contents/Resources/runtime/primary-runtime(?:/|$)', '/Contents/Resources/quick-help/input-helper$', '\\.pak$'],
+       notarize: !unsigned,
+       target: unsigned ? ['dmg'] : ['dmg', 'zip'],
+     },
+diff --git a/apps/desktop/src/directory-picker.ts b/apps/desktop/src/directory-picker.ts
+--- a/apps/desktop/src/directory-picker.ts
++++ b/apps/desktop/src/directory-picker.ts
+@@ -1,16 +1,16 @@
+ /** Window-owned workspace directory dialogs for the local Desktop renderer. */
+ 
+-import { dialog, ipcMain, type BrowserWindow } from 'electron'
++import { dialog, ipcMain, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
+ import { DESKTOP_IPC, assertDesktopSender } from './ipc.ts'
+ 
+ /**
+  * Install the application-lifetime directory picker IPC handler.
+  * @param getWindow - Current local application window; shell pages and subframes cannot open dialogs.
+  */
+-export function installDesktopDirectoryPicker(getWindow: () => BrowserWindow | undefined): void {
++export function installDesktopDirectoryPicker(getWindow: (event: IpcMainInvokeEvent) => BrowserWindow | undefined): void {
+   const pending = new WeakMap<BrowserWindow, Promise<string | null>>()
+   ipcMain.handle(DESKTOP_IPC.directoryPick, async (event) => {
+-    const window = getWindow()
++    const window = getWindow(event)
+     if (window === undefined || window.isDestroyed() || event.sender !== window.webContents
+       || event.senderFrame !== window.webContents.mainFrame) {
+       throw new Error('dsh desktop: rejected directory picker from an unowned renderer')
+diff --git a/apps/desktop/src/ipc.ts b/apps/desktop/src/ipc.ts
+--- a/apps/desktop/src/ipc.ts
++++ b/apps/desktop/src/ipc.ts
+@@ -84,6 +84,12 @@
+     open(): Promise<void>
+     subscribe(listener: (state: DesktopUpdatePresentation) => void): () => void
+   }
++  readonly quickHelp: {
++    probeHotkey(accelerator: string): Promise<{ ok: boolean; available: boolean; reason?: string }>
++    openWheel(): Promise<void>
++    openAsk(): Promise<void>
++    retry(): Promise<void>
++  }
+ }
+ 
+ /** Scheme of Desktop-owned application documents. */
+diff --git a/apps/desktop/src/main.ts b/apps/desktop/src/main.ts
+--- a/apps/desktop/src/main.ts
++++ b/apps/desktop/src/main.ts
+@@ -3,7 +3,7 @@
+ /** Electron shell: desktop project ownership, custom protocol, windows, and lifecycle. */
+ 
+ import { readFile, writeFile } from 'node:fs/promises'
+-import { join } from 'node:path'
++import { dirname, join } from 'node:path'
+ import { fileURLToPath } from 'node:url'
+ import {
+   app,
+@@ -64,6 +64,7 @@
+ import { DesktopQuitConfirmation } from './quit-confirmation.ts'
+ import { DesktopTray } from './tray.ts'
+ import { DesktopBackgroundNotice } from './background-notice.ts'
++import { installQuickHelp } from './quick-help-wiring.ts'
+ 
+ let focusPrimaryWindow = (): void => {}
+ let stopForRecovery = async (): Promise<void> => {}
+@@ -405,6 +406,7 @@
+   const applicationUrl = `${SCHEME}://app/`
+   let hostUrl: string | undefined
+   let hostCookie: string | undefined
++  let quickHelp: ReturnType<typeof installQuickHelp> | undefined
+   const browserGuests = new DesktopBrowserGuests(() => hostUrl)
+   let injections: readonly unknown[] = []
+   let welcomeBackend: DesktopWelcomeBackend | undefined
+@@ -423,8 +425,8 @@
+   let previousAccountStatus: string | undefined
+   const assertProductSender = (event: IpcMainInvokeEvent): void => {
+     assertDesktopSender(event, ['app'])
+-    if (mainWindow === undefined || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents
+-      || event.senderFrame === null || event.senderFrame !== mainWindow.webContents.mainFrame) {
++    if (!quickHelp?.desktop.ownsCompactSender(event) && (mainWindow === undefined || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents
++      || event.senderFrame === null || event.senderFrame !== mainWindow.webContents.mainFrame)) {
+       throw new Error('dsh desktop: rejected IPC from an unowned renderer')
+     }
+   }
+@@ -515,7 +517,10 @@
+     }
+   }, (state) => {
+     if (state.phase === 'error') reportFatal(state.failure, 'host')
+-    else if (!shuttingDown) backendReady = state.phase === 'ready'
++    else if (!shuttingDown) {
++      backendReady = state.phase === 'ready'
++      if (backendReady) quickHelp?.desktop.hostReady()
++    }
+   })
+ 
+   const updateErrors = new WeakMap<DesktopUpdateState, Promise<void>>()
+@@ -682,11 +687,66 @@
+     return Promise.resolve(new Response(null, { status: 404 }))
+   })
+ 
+-  installDesktopDirectoryPicker(() => mainWindow)
++  installDesktopDirectoryPicker(event => quickHelp?.desktop.ownsCompactSender(event) ? BrowserWindow.fromWebContents(event.sender) ?? undefined : mainWindow)
+   installMicrophonePermissions(session.defaultSession, () => mainWindow?.webContents)
+   const shortcuts = installDesktopShortcuts(() => mainWindow, app.getPath('userData'),
+     process.platform === 'darwin' ? 'macos' : process.platform === 'win32' ? 'windows' : 'linux', () => { refreshApplicationMenu() }, window => updateOverlays.input(window))
+   app.on('will-quit', () => { shortcuts.dispose() })
++
++  // The quick-help overlay and its input helper are created here, at startup,
++  // rather than on the first hotkey press: the window would otherwise appear as
++  // an empty rectangle while its document loaded, which is long enough to notice.
++  // A missing helper is reported and does not stop the application from booting.
++  quickHelp = installQuickHelp({
++    focusMainWindow: () => {
++      const owner = mainWindow
++      if (owner === undefined || owner.isDestroyed()) return
++      if (owner.isMinimized()) owner.restore()
++      owner.show()
++      owner.focus()
++    },
++    // The main bundle is ESM in packaged builds, so derive its directory from
++    // import.meta.url instead of relying on CommonJS's unavailable __dirname.
++    preloadDir: dirname(fileURLToPath(import.meta.url)),
++    // Read per attempt rather than captured: the backend is still coming up when
++    // this is installed, and the helper needs the plugin's trigger chord before it
++    // can answer a single keystroke.
++    hostEndpoint: () => hostUrl !== undefined && hostCookie !== undefined
++      ? { host: hostUrl, cookie: hostCookie }
++      : undefined,
++    onStatus: (helper, detail) => {
++      const endpoint = hostUrl !== undefined && hostCookie !== undefined ? { host: hostUrl, cookie: hostCookie } : undefined
++      if (endpoint === undefined) return
++      const request = new Request('dsh-app://app/quick-help/api/runtime', {
++        method: 'POST',
++        headers: { origin: 'dsh-app://app', 'content-type': 'application/json' },
++        body: JSON.stringify({ helper, ...(detail === undefined ? {} : { detail }) }),
++      })
++      void forwardWebRequest(request, endpoint.host, endpoint.cookie).catch(() => undefined)
++    },
++  })
++  ipcMain.handle('dsh-quick-help:product-open-wheel', (event) => {
++    assertDesktopSender(event, ['app'])
++    if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame) throw new Error('quick help: rejected product IPC')
++    return quickHelp.openWheel()
++  })
++  ipcMain.handle('dsh-quick-help:product-open-ask', (event) => {
++    assertDesktopSender(event, ['app'])
++    if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame) throw new Error('quick help: rejected product IPC')
++    quickHelp.openAsk()
++  })
++  ipcMain.handle('dsh-quick-help:product-retry', (event) => {
++    assertDesktopSender(event, ['app'])
++    if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame) throw new Error('quick help: rejected product IPC')
++    quickHelp.retry()
++  })
++  app.on('will-quit', () => { quickHelp.dispose() })
++  ipcMain.handle('dsh-quick-help:product-probe-hotkey', (event, accelerator: unknown) => {
++    assertDesktopSender(event, ['app'])
++    if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame) throw new Error('quick help: rejected product IPC')
++    if (typeof accelerator !== 'string') throw new Error('quick help: invalid hotkey')
++    return quickHelp.desktop.probeHotkey(accelerator)
++  })
+ 
+   ipcMain.handle(DESKTOP_IPC.boot, async (event) => {
+     assertDesktopSender(event, ['app'])
+@@ -697,6 +757,7 @@
+ 
+   ipcMain.handle(DESKTOP_IPC.bootFailed, (event, message: unknown) => {
+     assertDesktopSender(event, ['app'])
++    if (quickHelp?.desktop.ownsCompactSender(event)) { console.error('quick help Client startup failed:', message); return }
+     if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame) {
+       throw new Error('dsh desktop: rejected startup failure from a non-primary frame')
+     }
+@@ -714,7 +775,7 @@
+   })
+ 
+   session.defaultSession.webRequest.onBeforeSendHeaders({ urls: ['ws://127.0.0.1/*', 'wss://127.0.0.1/*'] }, (details, callback) => {
+-    if (hostUrl === undefined || hostCookie === undefined || details.webContentsId !== mainWindow?.webContents.id) {
++    if (hostUrl === undefined || hostCookie === undefined || (details.webContentsId !== mainWindow?.webContents.id && !quickHelp?.desktop.ownsCompactWebContents(details.webContentsId))) {
+       callback({})
+       return
+     }
+@@ -752,8 +813,8 @@
+     if (source === 'light' || source === 'dark' || source === 'system') nativeTheme.themeSource = source
+   })
+   ipcMain.handle(DESKTOP_IPC.localeBootstrap, async (event) => {
+-    if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame
+-      || new URL(event.senderFrame.url).origin !== new URL(applicationUrl).origin) {
++    if (!quickHelp?.desktop.ownsCompactSender(event) && (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame
++      || new URL(event.senderFrame.url).origin !== new URL(applicationUrl).origin)) {
+       throw new Error('desktop welcome: rejected locale request from an unowned frame')
+     }
+     if (welcomeBackend === undefined) throw new Error('desktop welcome: backend unavailable')
+diff --git a/apps/desktop/src/preload-app.ts b/apps/desktop/src/preload-app.ts
+--- a/apps/desktop/src/preload-app.ts
++++ b/apps/desktop/src/preload-app.ts
+@@ -55,10 +55,16 @@
+         return () => { ipcRenderer.off(DESKTOP_IPC.updatesPresentation, handle) }
+       },
+     },
++    quickHelp: {
++      probeHotkey: (accelerator: string) => ipcRenderer.invoke('dsh-quick-help:product-probe-hotkey', accelerator) as Promise<{ ok: boolean; available: boolean; reason?: string }>,
++      openWheel: () => ipcRenderer.invoke('dsh-quick-help:product-open-wheel') as Promise<void>,
++      openAsk: () => ipcRenderer.invoke('dsh-quick-help:product-open-ask') as Promise<void>,
++      retry: () => ipcRenderer.invoke('dsh-quick-help:product-retry') as Promise<void>,
++    },
+   }
+ }
+ 
+-if (location.protocol === `${SCHEME}:` && location.hostname === 'app') {
++if (location.protocol === `${SCHEME}:` && location.hostname === 'app' && location.pathname === '/') {
+   contextBridge.exposeInMainWorld('dshOnboarding', {
+     hasApiKey: () => ipcRenderer.invoke(DESKTOP_IPC.onboardingApiKey) as Promise<boolean>,
+     setActive: (active: boolean) => { ipcRenderer.send(DESKTOP_IPC.onboardingActive, active) },
+@@ -129,9 +135,9 @@
+ syncWindowFullscreen()
+ syncNativeTheme()
+ // Main-process IPC also verifies the owning window and top frame.
+-contextBridge.exposeInMainWorld('dshDesktop', location.protocol === `${SCHEME}:` && location.hostname === 'app' && process.isMainFrame ? createProductApi() : { protocolVersion: 1 })
++contextBridge.exposeInMainWorld('dshDesktop', location.protocol === `${SCHEME}:` && location.hostname === 'app' && location.pathname === '/' && process.isMainFrame ? createProductApi() : { protocolVersion: 1 })
+ 
+-if (location.protocol === `${SCHEME}:` && location.hostname === 'app') {
++if (location.protocol === `${SCHEME}:` && location.hostname === 'app' && location.pathname === '/') {
+   contextBridge.exposeInMainWorld('__DSH_LOCALE__', {
+     read: () => ipcRenderer.invoke(DESKTOP_IPC.localeBootstrap),
+     onChange: (locale: string) => { ipcRenderer.send(DESKTOP_IPC.localeChanged, locale) },
+diff --git a/apps/desktop/tests/installer-packaging.spec.ts b/apps/desktop/tests/installer-packaging.spec.ts
+--- a/apps/desktop/tests/installer-packaging.spec.ts
++++ b/apps/desktop/tests/installer-packaging.spec.ts
+@@ -99,4 +99,17 @@
+     const packaged = new Set(config.files.filter((entry): entry is string => typeof entry === 'string'))
+     for (const name of referenced) expect(packaged.has(`lib/${name}`)).toBe(true)
+   })
++
++  it('preserves the separately signed quick-help helper identity during app signing', async () => {
++    const { createElectronBuilderConfig } = await import('../scripts/electron-builder-config.mjs')
++    const config = createElectronBuilderConfig({
++      DSH_DESKTOP_APP_ID: 'com.example.quick-help',
++      DSH_DESKTOP_MANDATORY_UPDATE_TEST_ORIGIN: 'https://policy.example.com',
++      DSH_DESKTOP_MANDATORY_UPDATE_CONFIG: JSON.stringify({ allowedAuthOrigins: ['https://login.example.com'] }),
++      DSH_DESKTOP_TARGET_PLATFORM: 'darwin',
++      DSH_DESKTOP_TARGET_ARCH: 'arm64',
++      DSH_DESKTOP_UNSIGNED: '1',
++    }, 'darwin', 'arm64')
++    expect(config.mac.signIgnore).toContain('/Contents/Resources/quick-help/input-helper$')
++  })
+ })
+diff --git a/apps/desktop/tests/preload.e2e.ts b/apps/desktop/tests/preload.e2e.ts
+--- a/apps/desktop/tests/preload.e2e.ts
++++ b/apps/desktop/tests/preload.e2e.ts
+@@ -89,4 +89,83 @@
+       expect(invoke).toHaveBeenCalledWith('dsh-welcome:take-notice')
+     }
+   })
++
++  // The quick-help preload is the one that installs at module scope, because a
++  // sandboxed preload is evaluated by Electron rather than imported by anything.
++  // An exported-but-uncalled installer therefore type-checks, bundles, and reaches
++  // production while exposing nothing — and the overlay's symptom would be a wheel
++  // that never opens and a settings page that never saves, with nothing in the log
++  // pointing at a preload that ran and did nothing.
++  describe('quick-help bridge', () => {
++    /** Execute the built preload as Electron would, at one page URL. */
++    function runAt(href: string): { exposed: Map<string, Record<string, unknown>>; invoke: ReturnType<typeof vi.fn> } {
++      const exposed = new Map<string, Record<string, unknown>>()
++      const invoke = vi.fn<(...args: unknown[]) => Promise<unknown>>(() => Promise.resolve({ supported: true, helper: 'running', displays: [] }))
++      const electron = {
++        contextBridge: { exposeInMainWorld: (key: string, value: Record<string, unknown>) => { exposed.set(key, value) } },
++        ipcRenderer: { invoke, send: vi.fn(), on: vi.fn(), off: vi.fn(), removeListener: vi.fn() },
++      }
++      runInNewContext(readFileSync(preload('preload-quick-help'), 'utf8'), {
++        require: (id: string) => {
++          if (id !== 'electron') throw new Error(`sandbox cannot load ${id}`)
++          return electron
++        },
++        ...browserEnvironment().globals,
++        process: { argv: ['electron'], isMainFrame: true, platform: 'darwin' },
++        location: new URL(href),
++        // Browser globals the preload uses to validate its own page and read `state`.
++        URL,
++        URLSearchParams,
++        exports: {},
++      })
++      return { exposed, invoke }
++    }
++
++    it.each(['wheel', 'ask', 'settings', 'feedback'] as const)('exposes the bridge on /quick-help/%s with or without state', (route) => {
++      const { exposed } = runAt(`dsh-app://app/quick-help/${route}`)
++      expect(exposed.has('__DSH_QUICK_HELP__')).toBe(true)
++      const withState = runAt(`dsh-app://app/quick-help/${route}?state=task-1`)
++      expect(withState.exposed.has('__DSH_QUICK_HELP__')).toBe(true)
++    })
++
++    it('carries the state string the host put in the URL', () => {
++      const { exposed } = runAt('dsh-app://app/quick-help/ask?state=harness-guard%2Fv3')
++      const bridge = exposed.get('__DSH_QUICK_HELP__') as { initialState(): string | undefined }
++      expect(bridge.initialState()).toBe('harness-guard/v3')
++    })
++
++    it('routes every bridge call to its own channel', () => {
++      const { exposed, invoke } = runAt('dsh-app://app/quick-help/wheel')
++      const bridge = exposed.get('__DSH_QUICK_HELP__') as {
++        probeHotkey(accelerator: string): unknown
++        hide(route?: 'wheel' | 'ask' | 'settings'): unknown
++        feedbackReady(generation: number): unknown
++      }
++      bridge.probeHotkey('Control+Option+Space')
++      expect(invoke).toHaveBeenCalledWith('dsh-quick-help:probe-hotkey', 'Control+Option+Space')
++      bridge.feedbackReady(7)
++      expect(invoke).toHaveBeenCalledWith('dsh-quick-help:feedback-ready', 7)
++      bridge.hide('wheel')
++      expect(invoke).toHaveBeenCalledWith('dsh-quick-help:hide', 'wheel')
++    })
++
++    // The main window is on the same origin and is not owned by this feature, so a
++    // bridge that can move a window and drive a global input tap must not be
++    // reachable from an ordinary document.
++    it.each([
++      'dsh-app://app/',
++      'dsh-app://shell/settings.html',
++      // A prefix match would let a path that merely starts the same way through.
++      'dsh-app://app/quick-help/wheelish',
++      'dsh-app://app/quick-help/',
++      // The one that a `href.slice(13).split('?')[1]` guard lets through: the
++      // pathname is someone else's document and the route only appears in the
++      // query string, so a bridge installed here would be handed a page the
++      // sender check never approved.
++      'dsh-app://app/other?/quick-help/wheel',
++    ])('withholds the bridge from %s', (href) => {
++      const { exposed } = runAt(href)
++      expect(exposed.has('__DSH_QUICK_HELP__')).toBe(false)
++    })
++  })
+ })
+diff --git a/apps/desktop/tsdown.config.ts b/apps/desktop/tsdown.config.ts
+--- a/apps/desktop/tsdown.config.ts
++++ b/apps/desktop/tsdown.config.ts
+@@ -90,7 +90,7 @@
+     clean: false,
+     deps: { neverBundle: ['electron'] },
+   },
+-  ...(['preload-app', 'preload-welcome', 'preload-platform-account', 'preload-mandatory', 'preload-update-dialog'] as const).map(name => ({
++  ...(['preload-app', 'preload-welcome', 'preload-platform-account', 'preload-mandatory', 'preload-update-dialog', 'preload-quick-help'] as const).map(name => ({
+     // Sandboxed Electron preloads run as CommonJS even though the application package is ESM.
+     entry: { [name]: `lib/types/${name}.js` },
+     plugins: [packagedImportsPlugin(preloadImports)],
+diff --git a/packages/client/ui-chat/src/client/chat/TurnTriggerNodeView.module.css b/packages/client/ui-chat/src/client/chat/TurnTriggerNodeView.module.css
+--- a/packages/client/ui-chat/src/client/chat/TurnTriggerNodeView.module.css
++++ b/packages/client/ui-chat/src/client/chat/TurnTriggerNodeView.module.css
+@@ -29,6 +29,10 @@
+ .body { padding: 0 16px 12px 40px; }
+ .explanation { margin: 8px 0; color: var(--dsw-alias-label-secondary); font: var(--dsw-font-xxs-12); }
+ .content { max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: var(--dsw-font-xxs-12); }
++:global([data-compact-conversation]) .root { border: 0; background: transparent; }
++:global([data-compact-conversation]) .header { padding: 4px 0; gap: 6px; }
++:global([data-compact-conversation]) .title { flex: 1; min-width: 0; font-size: 11px; }
++:global([data-compact-conversation]) .time { font-size: 10px; }
+ 
+ @media (prefers-reduced-motion: reduce) {
+   .root, .header { transition: none; }
+diff --git a/packages/client/ui-chat/src/client/chat/TurnTriggerNodeView.tsx b/packages/client/ui-chat/src/client/chat/TurnTriggerNodeView.tsx
+--- a/packages/client/ui-chat/src/client/chat/TurnTriggerNodeView.tsx
++++ b/packages/client/ui-chat/src/client/chat/TurnTriggerNodeView.tsx
+@@ -30,6 +30,8 @@
+   const [open, setOpen] = useState(false)
+   const bodyId = useId()
+   const details = turnTriggerDetails(node.data)
++  const source = node.data.source as { kind?: string; summary?: string }
++  const summary = source.kind === 'quick-help-feedback' && typeof source.summary === 'string' ? source.summary.slice(0, 120) : undefined
+   const TriggerIcon = TRIGGER_ICONS[details.icon]
+   const date = new Date(node.data.time)
+   const time = formatMessageClock(node.data.time, t)
+@@ -37,7 +39,7 @@
+     <section className={css.root} data-turn-trigger>
+       <button className={css.header} type="button" aria-expanded={open} aria-controls={bodyId} onClick={() => { setOpen(!open) }}>
+         <span className={css.icon} aria-hidden><TriggerIcon size={14} /></span>
+-        <span className={css.title}>{t(details.title)}</span>
++        <span className={css.title}>{summary ?? t(details.title)}</span>
+         <time className={css.time} dateTime={date.toISOString()}>{time}</time>
+         <IconChevronDownOutlineRegular size={12} className={open ? css.openChevron : css.chevron} />
+       </button>
+diff --git a/packages/client/ui-conversation/README.md b/packages/client/ui-conversation/README.md
+--- a/packages/client/ui-conversation/README.md
++++ b/packages/client/ui-conversation/README.md
+@@ -180,3 +180,5 @@
+ None.
+ 
+ </details>
++
++The `conversation.input.left` owner exposes validated `addFiles(files): boolean` intake for screenshot controls. Rejected images stay outside the draft; accepted images use the standard preview and send flow.
+diff --git a/packages/client/ui-conversation/README.zh.md b/packages/client/ui-conversation/README.zh.md
+--- a/packages/client/ui-conversation/README.zh.md
++++ b/packages/client/ui-conversation/README.zh.md
+@@ -180,3 +180,5 @@
+ 无。
+ 
+ </details>
++
++`conversation.input.left` 的 owner 提供经过校验的 `addFiles(files): boolean`，供截图等输入控件复用。拒绝的图片不进入草稿，成功的图片沿用正式预览和发送流程。
+diff --git a/packages/client/ui-conversation/src/client/contract/slots.ts b/packages/client/ui-conversation/src/client/contract/slots.ts
+--- a/packages/client/ui-conversation/src/client/contract/slots.ts
++++ b/packages/client/ui-conversation/src/client/contract/slots.ts
+@@ -15,6 +15,12 @@
+ import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
+ import type { SessionId } from '@deepseek-ai/dsh-session/types'
+ import type { WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
++
++/** Validated composer file intake exposed to controls in its left toolbar. */
++export interface ComposerFileIntakeOwnerProps {
++  /** Add files through the same size, modality and draft checks as the picker. */
++  addFiles(files: readonly File[]): boolean
++}
+ import type { ComposerBlock } from './composer-blocks.ts'
+ import type { DraftAttachmentId, InputActions, InputNotice, InputState } from './input.ts'
+ import type { ComposerKeyboard, DraftSnapshot, EditSelection } from './draft-editor.ts'
+@@ -202,7 +208,7 @@
+     /** Ambient entries below the composer card. */
+     'conversation.composer.dock': { kind: 'list'; scope: 'session' }
+     /** Compact controls at the left of the composer tool row. */
+-    'conversation.input.left': { kind: 'list'; scope: 'session' }
++    'conversation.input.left': { kind: 'list'; scope: 'session'; owner: ComposerFileIntakeOwnerProps }
+     /** Compact controls before the composer submit action. */
+     'conversation.input.right': { kind: 'list'; scope: 'session' }
+     /** Compact action after the model selector; it can expand across the toolbar while retaining the editor and submit action. */
+diff --git a/packages/client/ui-conversation/src/client/locales.ts b/packages/client/ui-conversation/src/client/locales.ts
+--- a/packages/client/ui-conversation/src/client/locales.ts
++++ b/packages/client/ui-conversation/src/client/locales.ts
+@@ -24,6 +24,7 @@
+   'placeholder.workspace': '选择一个工作区开始',
+   'placeholder.steerQueue': 'Cmd/Ctrl+Enter 插话发送全部排队消息',
+   'input.commands': '添加文件或调用指令',
++  'input.more': '更多聊天选项',
+   'input.file': '文件',
+   'input.stop': '停止生成',
+   'input.send': '发送消息',
+@@ -402,6 +403,7 @@
+   'placeholder.workspace': 'Choose a workspace to start',
+   'placeholder.steerQueue': 'Cmd/Ctrl+Enter steers all queued messages',
+   'input.commands': 'Add files or run commands',
++  'input.more': 'More chat options',
+   'input.file': 'File',
+   'input.stop': 'Stop generating',
+   'input.send': 'Send message',
+diff --git a/packages/client/ui-conversation/src/client/skeleton/ConversationContent.tsx b/packages/client/ui-conversation/src/client/skeleton/ConversationContent.tsx
+--- a/packages/client/ui-conversation/src/client/skeleton/ConversationContent.tsx
++++ b/packages/client/ui-conversation/src/client/skeleton/ConversationContent.tsx
+@@ -5,6 +5,7 @@
+ import type { ConversationContentProps, ConversationViewsProps, InputZone } from '../contract/slots.ts'
+ import { HeroShell, WorkspaceChip, workspaceLabel } from './EmptyHero.tsx'
+ import css from './ConversationRoot.module.css'
++import { isCompactConversation } from '../compact.ts'
+ 
+ function ConversationSessionView({ renderSlot }: ConversationViewsProps) {
+   return renderSlot('conversation.session', {})
+@@ -20,6 +21,7 @@
+  * @returns the Conversation view, Composer, and optional width controls.
+  */
+ export function ConversationContent(props: ConversationContentProps) {
++  const compact = isCompactConversation()
+   const {
+     sessionId, phase, hero, useSession, useSessions, useSessionStatus,
+     useWorkspaces, useInput, useComposerBlock, renderSlot, renderSlotChain,
+@@ -188,7 +190,7 @@
+   return (
+     <div
+       ref={setBody}
+-      className={clsx(css.body, props.variant === 'embedded' && css.embeddedBody)}
++      className={clsx(css.body, props.variant === 'embedded' && css.embeddedBody, compact && css.compactBody)}
+       data-conversation-content=""
+       data-conversation-session={sessionId}
+       data-conversation-region="chat"
+@@ -196,8 +198,9 @@
+     >
+       <div className={css.scrollBody} data-conversation-scroll="">
+         {sessionId === undefined ? null : <Views />}
+-        {composerSeat}
++        {compact ? null : composerSeat}
+       </div>
++      {compact ? composerSeat : null}
+       <WidthControls container={body} phase={phase} />
+     </div>
+   )
+diff --git a/packages/client/ui-conversation/src/client/skeleton/ConversationMainPanel.tsx b/packages/client/ui-conversation/src/client/skeleton/ConversationMainPanel.tsx
+--- a/packages/client/ui-conversation/src/client/skeleton/ConversationMainPanel.tsx
++++ b/packages/client/ui-conversation/src/client/skeleton/ConversationMainPanel.tsx
+@@ -2,6 +2,7 @@
+ import { conversationPhase } from '../contract/snapshot.ts'
+ import { ConversationWidthControls } from './ConversationWidthControls.tsx'
+ import css from './ConversationRoot.module.css'
++import { isCompactConversation } from '../compact.ts'
+ 
+ const CONTENT_SLOTS = { widthControls: ConversationWidthControls }
+ 
+@@ -41,16 +42,17 @@
+   const hero = sessionId === undefined
+     || (shellPhase === 'blank' && (openState === 'open' || summaryBlank === true))
+   const phase = settling ? 'settling' : hero ? 'hero' : 'active'
++  const compact = isCompactConversation()
+ 
+   return (
+-    <div className={css.root} data-phase={phase}>
+-      {renderSlot('conversation.header', {})}
++    <div className={css.root} data-phase={compact ? 'active' : phase} data-compact-conversation={compact || undefined}>
++      {compact ? null : renderSlot('conversation.header', {})}
+       {renderFactorySlot('conversation.content', {
+-        variant: 'main',
+-        phase,
+-        hero,
++        variant: compact ? 'embedded' : 'main',
++        phase: compact ? 'active' : phase,
++        hero: compact ? false : hero,
+       }, {
+-        slots: CONTENT_SLOTS,
++        slots: compact ? {} : CONTENT_SLOTS,
+       })}
+     </div>
+   )
+diff --git a/packages/client/ui-conversation/src/client/skeleton/ConversationRoot.module.css b/packages/client/ui-conversation/src/client/skeleton/ConversationRoot.module.css
+--- a/packages/client/ui-conversation/src/client/skeleton/ConversationRoot.module.css
++++ b/packages/client/ui-conversation/src/client/skeleton/ConversationRoot.module.css
+@@ -6,6 +6,12 @@
+   min-width: 0;
+   background: var(--dsw-alias-bg-base);
+ }
++
++.root[data-compact-conversation] { width: 100%; min-height: 0; --dsh-content-font-size: 12px; --dsh-content-font-delta: -2px; }
++.compactBody { width: 100%; --dsh-chat-content-width: calc(100% - 24px); --dsh-composer-card-max-width: 100%; --dsh-composer-side-clearance: 8px; }
++.compactBody > .scrollBody { flex: 1 1 0; padding: 8px 4px; }
++.compactBody > .composerSeat { position: relative; bottom: auto; flex: 0 0 auto; max-height: 160px; --dsh-composer-text-max-height: 80px; background: transparent; }
++.compactBody .composerStack { gap: 0; }
+ 
+ /* 76px with its rule: the height of the Sidebar's tab strip and header row
+    (ui-dockkit `.tabStrip` 38px + the pane header's 38px), so the two rules
+diff --git a/packages/client/ui-conversation/src/client/skeleton/InputBar.module.css b/packages/client/ui-conversation/src/client/skeleton/InputBar.module.css
+--- a/packages/client/ui-conversation/src/client/skeleton/InputBar.module.css
++++ b/packages/client/ui-conversation/src/client/skeleton/InputBar.module.css
+@@ -9,6 +9,15 @@
+      the space above; the status strip still carries its own margin. */
+   padding: 0 var(--dsh-composer-side-clearance) 4px;
+ }
++
++.compactInput { width: 100%; box-sizing: border-box; }
++.compactInput .card { gap: 4px; padding-top: 6px; border-radius: var(--dsw-radius-md); font-size: 12px; }
++.compactInput .dock[hidden] { display: none; }
++.compactInput .row { min-height: 30px; position: relative; justify-content: space-between; padding-bottom: 4px; }
++.compactInput .tools[hidden], .compactInput .standardControls[hidden] { display: none; }
++.compactMore { flex: 0 0 28px; width: 28px; height: 26px; border: 0; border-radius: var(--dsw-radius-sm); background: transparent; color: inherit; font-size: 19px; cursor: pointer; }
++.compactInput .tools { position: absolute; z-index: 20; bottom: calc(100% + 38px); left: 0; right: 0; min-height: 36px; padding: 6px 8px; flex-wrap: wrap; border: 0.5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-sm) var(--dsw-radius-sm) 0 0; background: var(--dsw-specific-sidebar-fill); }
++.compactInput .standardControls { position: absolute; z-index: 20; bottom: 100%; left: 0; right: 0; min-height: 36px; padding: 4px 8px; border: 0.5px solid var(--dsw-alias-border-l2); border-radius: 0 0 var(--dsw-radius-sm) var(--dsw-radius-sm); background: var(--dsw-specific-sidebar-fill); }
+ 
+ .dock {
+   display: flex;
+diff --git a/packages/client/ui-conversation/src/client/skeleton/InputBar.tsx b/packages/client/ui-conversation/src/client/skeleton/InputBar.tsx
+--- a/packages/client/ui-conversation/src/client/skeleton/InputBar.tsx
++++ b/packages/client/ui-conversation/src/client/skeleton/InputBar.tsx
+@@ -40,6 +40,7 @@
+ import { ContextMeter } from './ContextMeter.tsx'
+ import { observeControlRow } from './control-row-layout.ts'
+ import css from './InputBar.module.css'
++import { isCompactConversation } from '../compact.ts'
+ 
+ export type InputBarProps = ComposerBarProps
+ 
+@@ -52,6 +53,8 @@
+   workspacePickerOpen = false, onRequestWorkspace,
+   placeholder, accessory,
+ }: InputBarProps) {
++  const compact = isCompactConversation()
++  const [compactOptions, setCompactOptions] = useState(false)
+   const input = useInput(s => s)
+   const notice = useNotices(s => s)
+   const busyEnter = useBusyEnter(s => s)
+@@ -209,8 +212,8 @@
+   // client-side size or count limit and upload as soon as they are picked.
+   // The host enforces the same image limits at submit for callers that bypass
+   // this composer.
+-  const intakeFiles = useCallback((files: readonly File[], directories?: ReadonlySet<File>): void => {
+-    if (locked || machineBusy || (subagent !== null && !continuable) || addFiles === undefined || files.length === 0) return
++  const intakeFiles = useCallback((files: readonly File[], directories?: ReadonlySet<File>): boolean => {
++    if (locked || machineBusy || (subagent !== null && !continuable) || addFiles === undefined || files.length === 0) return false
+     const rejected = ((): string | null => {
+       // Child prompts support images, but not generic file receipts or the
+       // Desktop path-reference fallback. Refuse mixed batches before intake.
+@@ -236,6 +239,7 @@
+       return addFiles(files, directories)
+     })()
+     if (rejected !== null) showToast(rejected)
++    return rejected === null
+   }, [locked, machineBusy, subagent, continuable, addFiles, attachments, imageLimits, showToast, t])
+ 
+   const canAcceptDrop = (subagent === null || continuable) && !locked && !machineBusy && addFiles !== undefined
+@@ -372,7 +376,7 @@
+         : planActive ? t('placeholder.plan') : t('placeholder.default'))
+ 
+   return (
+-    <div className={clsx(css.root, variant === 'hero' && css.hero)}>
++    <div className={clsx(css.root, variant === 'hero' && css.hero, compact && css.compactInput)}>
+       {toast !== null && (
+         <Toast
+           key={toast.seq}
+@@ -436,8 +440,9 @@
+           hint={hint}
+           showPlaceholder={draft === '' && attachments.length === 0 && !claimActive}
+         />
+-        <div ref={rowRef} className={css.row}>
+-          <div className={css.tools} hidden={activity}>
++        <div ref={rowRef} className={css.row} data-compact-options={compactOptions || undefined}>
++          {compact && <button type="button" className={css.compactMore} aria-label={t('input.more')} aria-expanded={compactOptions} onClick={() => { setCompactOptions(open => !open) }}>···</button>}
++          <div className={css.tools} hidden={activity || (compact && !compactOptions)}>
+             <Tooltip label={t('input.commands')} side="top" delayMs={500}>
+               <button
+                 type="button"
+@@ -466,16 +471,16 @@
+             </div>
+             {input === undefined || sessionId === undefined
+               ? null
+-              : renderSlot('conversation.input.left', {})}
++              : renderSlot('conversation.input.left', { addFiles: intakeFiles })}
+           </div>
+           <div className={clsx(css.trailing, activity && css.trailingActive)}>
+-            <div className={css.standardControls} hidden={activity}>
++            <div className={css.standardControls} hidden={activity || (compact && !compactOptions)}>
+               {input === undefined || sessionId === undefined
+                 ? null
+                 : renderSlot('conversation.input.right', {})}
+               {sessionId === undefined ? null : renderSlot('conversation.input.model', { locked: modelSeatLocked })}
+             </div>
+-            {input === undefined || sessionId === undefined ? null : <div className={activity ? css.activityExpanded : css.activity}>
++            {compact || input === undefined || sessionId === undefined ? null : <div className={activity ? css.activityExpanded : css.activity}>
+               {renderSlot('conversation.input.activity', { locked, onActiveChange: setActivity })}
+             </div>}
+             {interruptible && (
+@@ -517,7 +522,7 @@
+           </div>
+         </div>
+       </div>
+-      <div className={css.dock} data-composer-dock>
++      <div className={css.dock} data-composer-dock hidden={compact}>
+         {variant === 'composer' && input !== undefined && sessionId !== undefined
+           ? renderSlot('conversation.composer.dock', {})
+           : null}
+diff --git a/packages/client/ui-layout/README.i18n.yaml b/packages/client/ui-layout/README.i18n.yaml
+--- a/packages/client/ui-layout/README.i18n.yaml
++++ b/packages/client/ui-layout/README.i18n.yaml
+@@ -15,8 +15,8 @@
+   en: d152484eb41ac6b4
+   zh: 09388d293f9be9cb
+ /deepseek-ai-dsh-client-ui-layout/use-this-package:
+-  en: cc6e9021ba3001bc
+-  zh: 97444857762b4e8e
++  en: 576323937a100c51
++  zh: 118092dda70f52a2
+ /deepseek-ai-dsh-client-ui-layout/use-this-package/window-chrome-seat:
+   en: 7eac53b38d0777fe
+   zh: 7f9422dff671ba50
+diff --git a/packages/client/ui-layout/README.md b/packages/client/ui-layout/README.md
+--- a/packages/client/ui-layout/README.md
++++ b/packages/client/ui-layout/README.md
+@@ -30,6 +30,8 @@
+ The root slot composes the sidebar, main content, and right column. The sidebar spans 264–420px, defaults to 280px, and retains a 56px rail when collapsed; below 1024px it collapses automatically, and opening the right panel collapses a manually expanded sidebar. The right panel first opens at 45% of the viewport, then retains the user's pixel preference, capped at 70%. To protect 400px for the center, the frame first reduces the right panel to 300px, then reports insufficient room so its occupant closes it, and only then compresses the center further. Dragging has no transition delay; the right handle is absent while closed or fullscreen.
+ 
+ Global panels occupy the root-scoped `main` keyed slot; `conversation` is the reserved key for the Conversation. `ctx.layout.selectPanel(id)` selects a registered panel, and `null` selects the Conversation without changing the current Session. The Plugins page contributes one of the shipped global panels.
++
++The dedicated desktop quick-help window supplies a preload bridge with a Session identity. In that window, AppFrame renders a compact header, the existing `conversation` main entry, and plugin controls in `shell.compact-actions`; the normal columns, bottom dock and shell overlays are omitted. URL parameters alone do not select this layout.
+ 
+ The single root-scoped `shell.bottom` slot spans the full width below the three columns. Its occupant controls its own height and visibility; the columns shrink by that height, and empty content reserves no space. Main-panel navigation preserves the bottom component. Column resize handles stop above it, while `shell.overlay` covers the whole frame. The default composition leaves this slot empty.
+ 
+diff --git a/packages/client/ui-layout/README.zh.md b/packages/client/ui-layout/README.zh.md
+--- a/packages/client/ui-layout/README.zh.md
++++ b/packages/client/ui-layout/README.zh.md
+@@ -30,6 +30,8 @@
+ 本插件在 root slot 中组合侧边栏、主内容和右栏。侧边栏宽度为 264～420px，默认为 280px，收起后保留 56px 控制栏；窗口宽度低于 1024px 时自动收起，打开右侧面板也会收起手动展开的侧边栏。右侧面板首次打开时使用视口宽度的 45%，之后保留用户的像素宽度偏好，上限为 70%。为给中栏保留 400px，框架先将右侧面板缩减至 300px，再报告空间不足，使占用方将其关闭，最后才进一步压缩中栏。拖动没有过渡延迟；右侧手柄在关闭或全屏时不显示。
+ 
+ 全局面板占据 root 作用域的 `main` keyed slot；`conversation` 是为会话界面保留的 key。`ctx.layout.selectPanel(id)` 选中已注册面板，`null` 则选中会话界面，但不改变当前会话。Plugins 页面是默认组合中的一个全局面板。
++
++桌面快捷求助专用窗口由 preload 桥提供 Session 标识。在该窗口中，AppFrame 只渲染紧凑标题栏、现有的 `conversation` 主区域和 `shell.compact-actions` 中的插件控件；普通侧栏、右栏、底部区域与 shell 浮层不挂载。URL 参数本身不会选择此布局。
+ 
+ root 作用域的单一 `shell.bottom` slot 横跨三列下方的整行。占用方控制自身高度与显隐；三列按该高度缩短，空内容不预留空间。切换主面板时保留底部组件。列宽拖拽手柄止于底部内容上方，`shell.overlay` 仍覆盖整个框架。默认组合不占用此 slot。
+ 
+diff --git a/packages/client/ui-layout/src/client/AppFrame.module.css b/packages/client/ui-layout/src/client/AppFrame.module.css
+--- a/packages/client/ui-layout/src/client/AppFrame.module.css
++++ b/packages/client/ui-layout/src/client/AppFrame.module.css
+@@ -6,6 +6,51 @@
+   overflow: hidden;
+   background: var(--dsw-alias-bg-base);
+ }
++
++.compactFrame {
++  --dsw-alias-bg-base: transparent;
++  --dsw-specific-input-major: color-mix(in srgb, var(--dsw-specific-sidebar-fill) 55%, transparent);
++  position: relative;
++  display: flex;
++  flex-direction: column;
++  width: 100%;
++  height: 100%;
++  min-width: 0;
++  overflow: hidden;
++  background: color-mix(in srgb, var(--dsw-specific-sidebar-fill) 25%, transparent);
++  backdrop-filter: blur(24px);
++}
++
++:global(html:has([data-quick-help-compact])), :global(body:has([data-quick-help-compact])), :global(#root:has([data-quick-help-compact])) { background: transparent; }
++
++.compactHeader {
++  box-sizing: border-box;
++  display: flex;
++  align-items: center;
++  justify-content: space-between;
++  flex: none;
++  height: 36px;
++  padding: 0 8px 0 14px;
++  cursor: grab;
++  user-select: none;
++  border-bottom: 0.5px solid var(--dsw-alias-border-l3);
++}
++
++.compactTitle { font-size: 12px; font-weight: 500; }
++.compactActions { display: flex; gap: 4px; }
++.compactFeatureActions { display: flex; align-items: center; min-width: 0; }
++.compactActions button {
++  width: 26px;
++  height: 26px;
++  padding: 0;
++  border: 0;
++  border-radius: var(--dsw-radius-sm);
++  background: transparent;
++  color: inherit;
++  cursor: pointer;
++}
++.compactActions button:hover { background: var(--dsw-alias-bg-layer-1); }
++.compactConversation { display: flex; flex: 1; min-height: 0; min-width: 0; overflow: hidden; }
+ 
+ /* Only a discrete collapse/expand toggle eases the tracks (the TSX holds
+    data-animating across the toggle on the deepsuite sider curve). Steady-state
+diff --git a/packages/client/ui-layout/src/client/AppFrame.tsx b/packages/client/ui-layout/src/client/AppFrame.tsx
+--- a/packages/client/ui-layout/src/client/AppFrame.tsx
++++ b/packages/client/ui-layout/src/client/AppFrame.tsx
+@@ -27,9 +27,59 @@
+ /** Full composed props: runtime share + child-slot render share + store share. */
+ export type AppFrameProps =
+   & PropsRuntime<'root'>
+-  & PropsRenderSlots<'sidebar' | 'main' | 'rightbar' | 'shell.bottom' | 'shell.overlay' | 'shell.leading'>
++  & PropsRenderSlots<'sidebar' | 'main' | 'rightbar' | 'shell.bottom' | 'shell.overlay' | 'shell.leading' | 'shell.compact-actions'>
+   & PropsStore<ReturnType<typeof createLayoutStore>>
+   & PropsLocale<'common'>
++  & { compactSettingsLabel(): string }
++
++interface CompactQuickHelpBridge {
++  compactSessionId(): string | undefined
++  rendererReady(): Promise<void>
++  dragWindow(phase: 'start' | 'move' | 'end'): Promise<void>
++  show(request: { route: 'settings'; focusable: true; clickThrough: false }): Promise<void>
++  hide(route: 'ask'): Promise<void>
++}
++
++/** Only the desktop overlay preload supplies this bridge. */
++function compactBridge(): CompactQuickHelpBridge | undefined {
++  const bridge = (globalThis as { __DSH_QUICK_HELP__?: CompactQuickHelpBridge }).__DSH_QUICK_HELP__
++  return bridge !== undefined && typeof bridge.compactSessionId === 'function'
++    && bridge.compactSessionId() ? bridge : undefined
++}
++
++/** Keep the full Conversation slot tree mounted inside the small desktop window. */
++function CompactAppFrame({ renderSlot, t, compactSettingsLabel }: AppFrameProps) {
++  const bridge = compactBridge()
++  const drag = useRef(false)
++  useEffect(() => {
++    void bridge?.rendererReady().catch(error => { console.error('quick help renderer readiness failed:', error) })
++  }, [bridge])
++  const endDrag = (): void => {
++    if (!drag.current) return
++    drag.current = false
++    dragWindow('end')
++  }
++  const dragWindow = (phase: 'start' | 'move' | 'end'): void => {
++    void bridge?.dragWindow(phase).catch(error => { console.error('quick help drag failed:', error) })
++  }
++  return <div className={css.compactFrame} data-quick-help-compact>
++    <div className={css.compactHeader}
++      onPointerDown={event => { if (event.button !== 0) return; drag.current = true; event.currentTarget.setPointerCapture(event.pointerId); dragWindow('start') }}
++      onPointerMove={() => { if (drag.current) dragWindow('move') }}
++      onPointerUp={event => { if (!drag.current) return; endDrag(); event.currentTarget.releasePointerCapture(event.pointerId) }}
++      onPointerCancel={endDrag}
++      onLostPointerCapture={endDrag}
++    >
++      <span className={css.compactTitle}>DSH</span>
++      <div className={css.compactActions}>
++        <div className={css.compactFeatureActions} onPointerDown={event => { event.stopPropagation() }}>{renderSlot('shell.compact-actions', {})}</div>
++        <button type="button" aria-label={compactSettingsLabel()} onPointerDown={event => { event.stopPropagation() }} onClick={() => { void bridge?.show({ route: 'settings', focusable: true, clickThrough: false }) }}>⚙</button>
++        <button type="button" aria-label={t('close')} onPointerDown={event => { event.stopPropagation() }} onClick={() => { void bridge?.hide('ask') }}>×</button>
++      </div>
++    </div>
++    <div className={css.compactConversation}>{renderSlot('main', {}, { entryKey: 'conversation' })}</div>
++  </div>
++}
+ 
+ /** Center column grid item (session-body building block). */
+ function CenterColumn(props: { children?: ReactNode }) {
+@@ -118,7 +168,7 @@
+ }
+ 
+ /** The three-column frame (see module doc). */
+-export function AppFrame({
++function StandardAppFrame({
+   useStore,
+   useSessions,
+   usePanelInfo,
+@@ -305,3 +355,8 @@
+     </div>
+   )
+ }
++
++/** Choose the compact shell only for the dedicated desktop preload bridge. */
++export function AppFrame(props: AppFrameProps) {
++  return compactBridge() === undefined ? <StandardAppFrame {...props} /> : <CompactAppFrame {...props} />
++}
+diff --git a/packages/client/ui-layout/src/client/index.ts b/packages/client/ui-layout/src/client/index.ts
+--- a/packages/client/ui-layout/src/client/index.ts
++++ b/packages/client/ui-layout/src/client/index.ts
+@@ -103,6 +103,8 @@
+      * `id` is added beside the shipped entries instead of replacing them.
+      */
+     'shell.overlay': { kind: 'list'; scope: 'root' }
++    /** Additive controls in the dedicated compact window's titlebar. */
++    'shell.compact-actions': { kind: 'list'; scope: 'root' }
+     /**
+      * Window-chrome seat at the frame's top-left, over every main panel.
+      * Mounted only while the sidebar column is fully hidden (macOS desktop
+@@ -178,12 +180,14 @@
+     const disposeRegistration = ctx.slots.register({
+       name: 'root',
+       locale: 'common',
++      inject: () => ({ compactSettingsLabel: () => t('compact.settings') }),
+       children: {
+         'sidebar': { kind: 'single', scope: 'root' },
+         'main': { kind: 'keyed', scope: 'root' },
+         'rightbar': { kind: 'single', scope: 'root' },
+         'shell.bottom': { kind: 'single', scope: 'root' },
+         'shell.overlay': { kind: 'list', scope: 'root' },
++        'shell.compact-actions': { kind: 'list', scope: 'root' },
+         'shell.leading': { kind: 'single', scope: 'root' },
+       },
+       store,
+diff --git a/packages/client/ui-layout/src/client/shortcut-locales.ts b/packages/client/ui-layout/src/client/shortcut-locales.ts
+--- a/packages/client/ui-layout/src/client/shortcut-locales.ts
++++ b/packages/client/ui-layout/src/client/shortcut-locales.ts
+@@ -1,4 +1,4 @@
+ /** Layout command labels. */
+-export const zh = { toggle: '展开／收起左侧栏' }
++export const zh = { toggle: '展开／收起左侧栏', 'compact.settings': '设置' }
+ /** English labels for the same layout commands. */
+-export const en: Record<keyof typeof zh, string> = { toggle: 'Toggle left sidebar' }
++export const en: Record<keyof typeof zh, string> = { toggle: 'Toggle left sidebar', 'compact.settings': 'Settings' }
+diff --git a/packages/client/ui-layout/tests/app-frame.client.spec.tsx b/packages/client/ui-layout/tests/app-frame.client.spec.tsx
+--- a/packages/client/ui-layout/tests/app-frame.client.spec.tsx
++++ b/packages/client/ui-layout/tests/app-frame.client.spec.tsx
+@@ -100,6 +100,7 @@
+       useResource={useResource}
+       useWorkspaces={sel => sel(workspaceState)}
+       t={key => key === 'brand.localBuild' ? 'DSH Local Build' : key}
++      compactSettingsLabel={() => 'Settings'}
+     />
+   )
+   const utils = render(element())
+@@ -183,6 +184,28 @@
+ })
+ 
+ describe('AppFrame', () => {
++  it('uses the complete conversation outlet only when the desktop compact bridge provides a Session', () => {
++    window.history.replaceState({}, '', '/?compactSessionId=session-from-query')
++    const ordinary = mountFrame()
++    expect(ordinary.frame.hasAttribute('data-quick-help-compact')).toBe(false)
++    ordinary.unmount()
++
++    const dragWindow = vi.fn(async () => {})
++    const hide = vi.fn(async () => {})
++    const rendererReady = vi.fn(async () => {})
++    vi.stubGlobal('__DSH_QUICK_HELP__', {
++      compactSessionId: () => 'session-from-preload', dragWindow, hide, rendererReady, show: vi.fn(async () => {}),
++    })
++    const compact = mountFrame()
++    expect(compact.frame.hasAttribute('data-quick-help-compact')).toBe(true)
++    expect(compact.slotCalls.map(call => call.key)).toEqual(['shell.compact-actions', 'main'])
++    expect(compact.slotCalls[1]?.options).toEqual({ entryKey: 'conversation' })
++    expect(rendererReady).toHaveBeenCalledTimes(1)
++    compact.getByRole('button', { name: 'close' }).click()
++    expect(hide).toHaveBeenCalledWith('ask')
++    window.history.replaceState({}, '', '/')
++  })
++
+   it('localizes the product title without a configured build title', () => {
+     mountFrame()
+     expect(document.title).toBe('DSH Local Build')
+diff --git a/packages/client/ui-layout/tests/apply.client.spec.ts b/packages/client/ui-layout/tests/apply.client.spec.ts
+--- a/packages/client/ui-layout/tests/apply.client.spec.ts
++++ b/packages/client/ui-layout/tests/apply.client.spec.ts
+@@ -93,6 +93,7 @@
+     expect(slots.spec('rightbar')).toEqual({ kind: 'single', scope: 'root' })
+     expect(slots.spec('shell.bottom')).toEqual({ kind: 'single', scope: 'root' })
+     expect(slots.spec('shell.overlay')).toEqual({ kind: 'list', scope: 'root' })
++    expect(slots.spec('shell.compact-actions')).toEqual({ kind: 'list', scope: 'root' })
+     expect(slots.spec('shell.leading')).toEqual({ kind: 'single', scope: 'root' })
+   })
+ 
+@@ -101,7 +102,7 @@
+     const fiber = ctx.plugin({ inject: [...inject], apply })
+     await fiber.await()
+     const entry = slots.entries('root')[0]!
+-    expect(entry.inject).toBeUndefined()
++    expect(entry.inject).toBeTypeOf('function')
+     const handle = entry.store as ReturnType<typeof createLayoutStore>
+     const instance = handle.create()
+     expect(handle.create()).toBe(instance)
+@@ -166,6 +167,7 @@
+     expect(slots.spec('rightbar')).toBeUndefined()
+     expect(slots.spec('shell.bottom')).toBeUndefined()
+     expect(slots.spec('shell.overlay')).toBeUndefined()
++    expect(slots.spec('shell.compact-actions')).toBeUndefined()
+     expect(slots.spec('shell.leading')).toBeUndefined()
+     expect(host.root.getSnapshot().hooks.panelInfo).toBeUndefined()
+     // The built-in root declaration survives entry teardown (renderer-owned).
+diff --git a/packages/client/ui-workspace/README.md b/packages/client/ui-workspace/README.md
+--- a/packages/client/ui-workspace/README.md
++++ b/packages/client/ui-workspace/README.md
+@@ -30,6 +30,8 @@
+ Use the sidebar to browse Workspaces and their Sessions, reorder them, and start new ones; use the picker in the Session Intent hero to choose a Workspace for a new session. An open Workspace shows five idle, non-blank Sessions by default. Running Sessions, including parents with running children, remain visible in their ordered positions without using that quota; the selected blank **New Session** is also an extra row until its first prompt. Each **Show more** click reveals up to five more idle Sessions; after the final batch, **Show less** restores the initial rows while keeping running Sessions visible. Closing and reopening the Workspace also restores this folded projection.
+ 
+ History rows without a stored title use the localized unnamed label (未命名 / Untitled), rather than a directory name. The current blank row remains New Session; other blank rows remain hidden. Rename drafts use the stored title, or start empty when unnamed; unnamed rows do not offer title copying.
++
++In the dedicated desktop quick-help window, the preload supplies the Session identity to open after both catalogs are ready. The selected Session uses the normal `mainView` reference and is released on teardown; this window does not restore or persist the main application's selection.
+ 
+ ### Reordering and view options
+ 
+diff --git a/packages/client/ui-workspace/README.zh.md b/packages/client/ui-workspace/README.zh.md
+--- a/packages/client/ui-workspace/README.zh.md
++++ b/packages/client/ui-workspace/README.zh.md
+@@ -30,6 +30,8 @@
+ 用侧边栏浏览 Workspace 及其 Session、重排它们并新建会话；在 Session Intent 主视觉区用选择器为新会话选择 Workspace。打开的 Workspace 默认显示五条空闲的非空白 Session。正在运行的 Session（包括有子会话正在运行的父会话）始终按原顺序显示，不占用这五条配额；当前选中的空白**新会话**在首条提示词落地前也作为额外行。每次点击**展开其余**最多再显示五条空闲 Session；全部显示后，**收起**恢复初始行数，但仍显示正在运行的 Session。关闭再打开 Workspace 也会恢复该折叠投影。
+ 
+ 未保存标题的历史会话显示本地化名称「未命名 / Untitled」，不使用目录名兜底。当前空会话仍显示「新会话」，其他空会话仍隐藏。重命名草稿使用已保存标题，无标题时留空；无标题行不提供标题复制。
++
++桌面快捷求助专用窗口在两个目录就绪后，打开 preload 提供的 Session。该 Session 使用正常的 `mainView` 引用，并在窗口销毁时释放；此窗口不恢复或保存主应用的会话选择。
+ 
+ ### 重排序与视图选项
+ 
+diff --git a/packages/client/ui-workspace/src/client/navigation.ts b/packages/client/ui-workspace/src/client/navigation.ts
+--- a/packages/client/ui-workspace/src/client/navigation.ts
++++ b/packages/client/ui-workspace/src/client/navigation.ts
+@@ -27,6 +27,13 @@
+   readonly subagentAddress?: SubagentAddress
+ }
+ 
++/** The desktop overlay preload supplies this identity; URL parameters are ignored. */
++function compactSessionId(): SessionId | undefined {
++  const bridge = (globalThis as { __DSH_QUICK_HELP__?: { compactSessionId?: () => string | undefined } }).__DSH_QUICK_HELP__
++  const id = bridge?.compactSessionId?.()
++  return id === undefined || id.length === 0 ? undefined : id as SessionId
++}
++
+ /** Optional content preparation for the resolved target Session. */
+ export type StartSessionOptions = DraftInitializationOptions
+ 
+@@ -139,7 +146,7 @@
+   private readonly connecting = new Map<WorkspaceId, Promise<SessionId>>()
+   private readonly lifetime = new AbortController()
+   private readonly selection = createSnapshotStore<MainSelection>(
+-    {}, { persist: { name: 'dsh.sessions.current' } },
++    {}, compactSessionId() === undefined ? { persist: { name: 'dsh.sessions.current' } } : {},
+   )
+   private mainReference: SessionReference | undefined
+ 
+@@ -340,13 +347,19 @@
+ 
+   private watchNavigation(): () => void {
+     let initial: 'waiting' | 'connecting' | 'done' = 'waiting'
++    const compactId = compactSessionId()
+     const reconcile = (): void => {
+       if (this.lifetime.signal.aborted) return
+-      if (this.clearArchivedCurrent()) return
+-      if (initial !== 'waiting') return
++      if (this.clearArchivedCurrent()) { initial = 'done'; return }
+       const workspace = this.workspaces.list.getSnapshot()
+       const sessions = this.sessions.list.getSnapshot()
+       if (workspace.phase !== 'ready' || sessions.phase !== 'ready') return
++      if (initial !== 'waiting') return
++      if (compactId !== undefined) {
++        initial = 'done'
++        this.openSession(compactId)
++        return
++      }
+       if (this.mainReference !== undefined) {
+         initial = 'done'
+         return
+diff --git a/packages/client/ui-workspace/tests/apply.client.spec.ts b/packages/client/ui-workspace/tests/apply.client.spec.ts
+--- a/packages/client/ui-workspace/tests/apply.client.spec.ts
++++ b/packages/client/ui-workspace/tests/apply.client.spec.ts
+@@ -194,6 +194,21 @@
+ const settled = (): Promise<void> => new Promise((resolve) => { setTimeout(resolve, 0) })
+ 
+ describe('ui-workspace apply', () => {
++  it('opens the preload-selected compact Session without restoring the main-window selection', async () => {
++    vi.stubGlobal('__DSH_QUICK_HELP__', { compactSessionId: () => 'compact-session' })
++    onTestFinished(() => { vi.unstubAllGlobals() })
++    const b = await bench()
++    onTestFinished(() => b.ctx.fiber.dispose())
++    b.setSessions(sessionState([summary('compact-session', 1)]))
++    declare(b.slots, 'sidebar.workspaces')
++    await b.ctx.plugin({ inject: [...inject], apply }).await()
++    await vi.waitFor(() => {
++      expect(b.retain).toHaveBeenCalledWith('compact-session', { source: 'mainView' })
++    })
++    expect(b.selectPanel).toHaveBeenCalledWith(null)
++    expect(b.initializeDefault).not.toHaveBeenCalled()
++  })
++
+   it('keeps the host Loader entry inert', () => {
+     expect(hostApply).not.toThrow()
+   })
+diff --git a/apps/desktop/src/preload-quick-help.ts b/apps/desktop/src/preload-quick-help.ts
+new file mode 100644
+--- /dev/null
++++ b/apps/desktop/src/preload-quick-help.ts
+@@ -0,0 +1,126 @@
++/**
++ * The only bridge the quick-help overlay gets.
++ *
++ * Deliberately narrow: it can move this feature's own window, change its
++ * hotkey, ask what the machine looks like, and read input events. It cannot
++ * navigate, evaluate, read a file, or reach any other part of the application.
++ * The overlay renders a wheel and an answer box; it has no business doing more,
++ * and a wider surface here would mean a wider surface to audit every time this
++ * feature changes.
++ *
++ * Everything else the page needs comes from its own plugin over HTTP, on the
++ * same origin, so this bridge never has to carry application data.
++ *
++ * Exposed on the overlay window only. The main application document and ordinary
++ * plugin pages never see it, so a plugin cannot reach the wheel's privileges from
++ * the sidebar.
++ */
++
++import { contextBridge, ipcRenderer } from 'electron'
++import './preload-app.ts'
++import type {
++  QuickHelpBindResult,
++  QuickHelpBridge,
++  QuickHelpEnvironment,
++  QuickHelpFeedbackRequest,
++  QuickHelpHelperConfig,
++  QuickHelpInputEvent,
++  QuickHelpRoute,
++  QuickHelpWindowRequest,
++} from './quick-help-ipc.ts'
++import { QUICK_HELP_IPC, QUICK_HELP_ORIGIN, QUICK_HELP_ROUTE_PATH } from './quick-help-ipc.ts'
++
++/**
++ * Install the bridge into the overlay window's isolated world.
++ *
++ * @param readState - The state string carried in the page URL, read once on load.
++ */
++export function installQuickHelpBridge(readState: () => string | undefined): void {
++  // Typed up front so a change to the contract fails here rather than silently
++  // widening what the page can reach.
++  const bridge: QuickHelpBridge & { initialState(): string | undefined } = {
++    compactSessionId: () => ownUrl.pathname === '/' ? ownUrl.searchParams.get('dshQuickHelpSession') ?? undefined : undefined,
++    /** The state the host put in the URL, so the page knows what to render. */
++    initialState: () => readState(),
++
++    environment: () => ipcRenderer.invoke(QUICK_HELP_IPC.environment) as Promise<QuickHelpEnvironment>,
++
++    show: (request: QuickHelpWindowRequest) => ipcRenderer.invoke(QUICK_HELP_IPC.show, request) as Promise<void>,
++
++    feedback: (request: QuickHelpFeedbackRequest) => ipcRenderer.invoke(QUICK_HELP_IPC.feedback, request) as Promise<void>,
++    feedbackReady: (generation: number) => ipcRenderer.invoke(QUICK_HELP_IPC.feedbackReady, generation) as Promise<void>,
++    onFeedbackShown: (listener: (generation: number) => void) => {
++      const wrapped = (_event: unknown, generation: number): void => { listener(generation) }
++      ipcRenderer.on(QUICK_HELP_IPC.feedbackShown, wrapped)
++      return () => { ipcRenderer.removeListener(QUICK_HELP_IPC.feedbackShown, wrapped) }
++    },
++    captureSelection: (owner: string) => ipcRenderer.invoke(QUICK_HELP_IPC.captureSelection, owner) as Promise<'captured' | 'cancelled'>,
++    readCapture: (owner: string) => ipcRenderer.invoke(QUICK_HELP_IPC.readCapture, owner) as Promise<string | undefined>,
++    stageCapture: (owner: string, dataUrl: string) => ipcRenderer.invoke(QUICK_HELP_IPC.stageCapture, owner, dataUrl) as Promise<void>,
++    discardCapture: () => ipcRenderer.invoke(QUICK_HELP_IPC.discardCapture) as Promise<void>,
++    dragWindow: (phase: 'start' | 'move' | 'end') => ipcRenderer.invoke(QUICK_HELP_IPC.dragWindow, phase) as Promise<void>,
++
++    hide: (route?: QuickHelpRoute) => ipcRenderer.invoke(QUICK_HELP_IPC.hide, route) as Promise<void>,
++
++    focusMain: () => ipcRenderer.invoke(QUICK_HELP_IPC.focusMain) as Promise<void>,
++
++    probeHotkey: (accelerator: string) => ipcRenderer.invoke(QUICK_HELP_IPC.probeHotkey, accelerator) as Promise<QuickHelpBindResult>,
++
++    configure: (config: QuickHelpHelperConfig) => ipcRenderer.invoke(QUICK_HELP_IPC.configure, config) as Promise<void>,
++
++    suspend: () => ipcRenderer.invoke(QUICK_HELP_IPC.suspend) as Promise<void>,
++
++    rendererReady: () => ipcRenderer.invoke(QUICK_HELP_IPC.rendererReady) as Promise<void>,
++
++    /**
++     * Subscribe to input events.
++     *
++     * The raw IpcRendererEvent is dropped rather than forwarded: handing a page
++     * the sender would give it a way to reply on this channel itself.
++     */
++    onInput: (listener: (event: QuickHelpInputEvent) => void) => {
++      const wrapped = (_event: unknown, payload: QuickHelpInputEvent): void => { listener(payload) }
++      ipcRenderer.on(QUICK_HELP_IPC.inputEvent, wrapped)
++      return () => { ipcRenderer.removeListener(QUICK_HELP_IPC.inputEvent, wrapped) }
++    },
++
++    onHelperStatus: (listener: (status: QuickHelpEnvironment['helper']) => void) => {
++      const wrapped = (_event: unknown, status: QuickHelpEnvironment['helper']): void => { listener(status) }
++      ipcRenderer.on(QUICK_HELP_IPC.helperStatus, wrapped)
++      return () => { ipcRenderer.removeListener(QUICK_HELP_IPC.helperStatus, wrapped) }
++    },
++  }
++  contextBridge.exposeInMainWorld('__DSH_QUICK_HELP__', bridge)
++}
++
++/**
++ * Install on load, for this feature's own pages only.
++ *
++ * This runs at module scope on purpose. A sandboxed Electron preload is not
++ * imported by anything — Electron evaluates the file as the preload script for the
++ * window it was configured on — so an exported installer that nothing calls is
++ * dead code that looks alive. The overlay would then load with no `DSH` object at
++ * all, every gesture would throw on the first property access, and the symptom
++ * would be a wheel that never appears and a settings page that never saves, with
++ * nothing in the log to connect either to a preload that ran but did nothing.
++ *
++ * The guard checks `protocol`, `host` and `pathname` separately, because the main
++ * window shares this origin and a bridge that can move a window and drive a global
++ * input tap must not be reachable from an ordinary document.
++ *
++ * It must be the parsed pathname and not a slice of the whole URL. Splitting the
++ * href on `?` and taking the second field reads the *query string* — which on a
++ * URL with no query is `undefined`, and on a crafted one is attacker-chosen text:
++ * `dsh-app://app/other?/quick-help/wheel` would satisfy a route check while
++ * loading someone else's document. `location.pathname` has no such reading, and
++ * the route list is compared whole, so `/quick-help/wheelish` cannot match either.
++ *
++ * `state` is read from `location.search` rather than re-parsing the href, so the
++ * query string that carries it stays out of the path decision entirely.
++ */
++const ownRoutes: readonly string[] = Object.values(QUICK_HELP_ROUTE_PATH)
++const ownUrl = new URL(location.href)
++if (`${ownUrl.protocol}//${ownUrl.host}` === QUICK_HELP_ORIGIN && (ownRoutes.includes(ownUrl.pathname) || ownUrl.pathname === '/quick-help/feedback'
++  || (ownUrl.pathname === '/' && ownUrl.searchParams.has('dshQuickHelpSession')))) {
++  installQuickHelpBridge(() => new URLSearchParams(ownUrl.search).get('state') ?? undefined)
++}
+diff --git a/apps/desktop/src/quick-help-ipc.ts b/apps/desktop/src/quick-help-ipc.ts
+new file mode 100644
+--- /dev/null
++++ b/apps/desktop/src/quick-help-ipc.ts
+@@ -0,0 +1,226 @@
++/**
++ * Wire contract between the quick-help overlay and the Electron main process.
++ *
++ * Kept in its own file so the overlay's preload, the main-process window, and the
++ * plugin's copy of the shapes cannot drift apart. Nothing here carries behaviour:
++ * these are the names and the payload shapes only.
++ *
++ * The overlay's documents are served by the plugin over the Host's own HTTP
++ * surface, not from the application bundle. That is what gives the ask window its
++ * streaming answers without this layer proxying a byte range, and it keeps the
++ * feature's whole user interface inside the plugin that owns it.
++ */
++
++/** Pages the overlay window is allowed to show. */
++export type QuickHelpRoute = 'wheel' | 'ask' | 'settings'
++
++/** One short-lived, click-through visual and sound response to an accepted action. */
++export interface QuickHelpFeedbackRequest {
++  /** One selection identity, shared by immediate feedback and later chat navigation. */
++  readonly id?: string
++  readonly sessionId?: string
++  readonly kind: 'ping' | 'emote'
++  readonly image: string
++  readonly animation?: string
++  readonly sound?: string
++  readonly volume: number
++  readonly x: number
++  readonly y: number
++}
++
++/** How the overlay window should behave for one request. */
++export interface QuickHelpWindowRequest {
++  readonly route: QuickHelpRoute
++  /** Keep action media alive while this window navigates to the chat page. */
++  readonly feedback?: QuickHelpFeedbackRequest
++  /** Window placement in DIP. Omitted means "leave it where it is". */
++  readonly bounds?: { readonly x: number; readonly y: number; readonly width: number; readonly height: number }
++  /**
++   * Whether the window takes keyboard focus.
++   *
++   * The wheel must not: the user is typing in another application and a focus
++   * steal would put their keystrokes somewhere they did not choose. The ask
++   * window must, because it is a text field the user is typing into.
++   */
++  readonly focusable?: boolean
++  /** Whether clicks pass straight through to the application underneath. */
++  readonly clickThrough?: boolean
++  /**
++   * Opaque state the overlay reads once on load.
++   *
++   * This is deliberately not the per-gesture state. Coordinates arrive over
++   * {@link QUICK_HELP_IPC.inputEvent} as the helper reports them, because a
++   * window reload on every wheel opening would be visible as a flicker exactly
++   * when the user is trying to hit a target.
++   */
++  readonly state?: string
++}
++
++/** What the overlay is told about this machine. */
++export interface QuickHelpEnvironment {
++  /** Display work areas and scale factors, for placement and hit-testing. */
++  readonly displays: readonly { readonly id: number; readonly x: number; readonly y: number; readonly width: number; readonly height: number; readonly scale: number }[]
++  /** Current pointer position in screen DIP, for placing the ask window. */
++  readonly cursor: { readonly x: number; readonly y: number }
++  /** Whether the OS has granted the accessibility permission the helper needs. */
++  readonly accessibility: boolean
++  /** Whether a system-wide wheel can run here at all. */
++  readonly supported: boolean
++  /** The helper's current state. */
++  readonly helper: 'stopped' | 'starting' | 'running' | 'no-access' | 'crashed' | 'unsupported'
++}
++
++/**
++ * One input-helper event, forwarded to the overlay as it happens.
++ *
++ * There is no `hotkey` member: nothing in the main process watches for a
++ * combination any more, so an event type for it would be a channel with no sender.
++ */
++export interface QuickHelpInputEvent {
++  /** Product test opens an interactive mouse wheel without holding a key. */
++  readonly manual?: boolean
++  readonly type: 'wheelOpen' | 'wheelMove' | 'wheelRelease' | 'cancel' | 'error'
++  readonly x?: number
++  readonly y?: number
++  readonly code?: string
++  readonly message?: string
++}
++
++/** Result of probing a hotkey. */
++export interface QuickHelpBindResult {
++  readonly ok: boolean
++  /**
++   * Whether no other application already owns the combination.
++   *
++   * Separate from `ok` on purpose: the probe can succeed at answering while the
++   * answer is "someone else has it", and the caller shows those two cases very
++   * differently.
++   */
++  readonly available: boolean
++  /** The answer, phrased for the person who set it. */
++  readonly reason?: string
++}
++
++/**
++ * The bridge the overlay page is given.
++ *
++ * Every call moves a window, reports input, or changes one setting. There is no
++ * member that can read a file, run a command, or reach an arbitrary Host route:
++ * the page talks to its own plugin over HTTP for everything else, and this
++ * bridge is only the part of the product no plugin can provide.
++ */
++export interface QuickHelpBridge {
++  /** Exact formal Session owned by this compact application document. */
++  compactSessionId(): string | undefined
++  environment(): Promise<QuickHelpEnvironment>
++  show(request: QuickHelpWindowRequest): Promise<void>
++  feedback(request: QuickHelpFeedbackRequest): Promise<void>
++  /** Start the lifetime only after the visible feedback page has decoded its artwork. */
++  feedbackReady(generation: number): Promise<void>
++  onFeedbackShown(listener: (generation: number) => void): () => void
++  /** Run macOS's interactive region picker; cancelled selections never leave main-process memory. */
++  captureSelection(owner: string): Promise<'captured' | 'cancelled'>
++  /** Read the selected PNG for a local preview; it is uploaded only on Send. */
++  readCapture(owner: string): Promise<string | undefined>
++  /** Retain a user-selected PNG locally across page changes; no model upload occurs. */
++  stageCapture(owner: string, dataUrl: string): Promise<void>
++  /** Discard an unsent selection. */
++  discardCapture(): Promise<void>
++  /** Move only this chat window using the real cursor displacement. */
++  dragWindow(phase: 'start' | 'move' | 'end'): Promise<void>
++  hide(route?: QuickHelpRoute): Promise<void>
++  /** Bring the main application window forward, for "go to the main window". */
++  focusMain(): Promise<void>
++  /**
++   * Ask whether a chord is already taken by another application.
++   *
++   * Deliberately not "register": a held global shortcut is removed from every
++   * other application, which is the opposite of what this feature wants. The chord
++   * is claimed and released inside this call, and the wheel itself is driven by the
++   * input helper, which observes rather than owns.
++   *
++   * The result is the only honest signal: Electron returns false rather than
++   * throwing when another application already owns the combination.
++   */
++  probeHotkey(accelerator: string): Promise<QuickHelpBindResult>
++  /** Send configuration to the input helper. */
++  configure(config: QuickHelpHelperConfig): Promise<void>
++  /** Stop capturing input without tearing anything down. */
++  suspend(): Promise<void>
++  /** Signal that the wheel page has installed its input listener. */
++  rendererReady(): Promise<void>
++  onInput(listener: (event: QuickHelpInputEvent) => void): () => void
++  onHelperStatus(listener: (status: QuickHelpEnvironment['helper']) => void): () => void
++}
++
++/**
++ * Configuration pushed to the native input helper.
++ *
++ * The two flags are `0 | 1` rather than `boolean`, because the helper reads this
++ * message with a positional `sscanf` and `%d` — a JSON boolean renders as `true`
++ * or `false`, and `%d` stops at the `t`. Every field after the first boolean was
++ * therefore silently left at its default, which is how hold-to-open mode never
++ * worked. Keeping the wire type numeric is what makes the format string honest.
++ */
++export interface QuickHelpHelperConfig {
++  /** macOS virtual key code that opens the wheel. */
++  readonly triggerVk: number
++  /**
++   * `CGEventFlags` bits that must all be down for the keystroke to count.
++   *
++   * Zero means a bare key. Without this the helper could only compare key codes,
++   * and binding Control+Option+Space would swallow every Space in every
++   * application, because the key code alone cannot tell them apart.
++   */
++  readonly modifierMask: number
++  /** Press-and-hold mode; 0 is press-to-open, 1 is hold. */
++  readonly holdMode: 0 | 1
++  /** Points of movement needed to confirm a gesture in hold mode. */
++  readonly dragThreshold: number
++  /** Milliseconds of no input before an open wheel cancels itself. */
++  readonly watchdogMs: number
++  /** Capture is live; 0 parks the tap without removing it. */
++  readonly enabled: 0 | 1
++}
++
++/** IPC channel names, private to this feature. */
++export const QUICK_HELP_IPC = {
++  environment: 'dsh-quick-help:environment',
++  show: 'dsh-quick-help:show',
++  feedback: 'dsh-quick-help:feedback',
++  feedbackReady: 'dsh-quick-help:feedback-ready',
++  feedbackShown: 'dsh-quick-help:feedback-shown',
++  captureSelection: 'dsh-quick-help:capture-selection',
++  readCapture: 'dsh-quick-help:read-capture',
++  stageCapture: 'dsh-quick-help:stage-capture',
++  discardCapture: 'dsh-quick-help:discard-capture',
++  dragWindow: 'dsh-quick-help:drag-window',
++  hide: 'dsh-quick-help:hide',
++  focusMain: 'dsh-quick-help:focus-main',
++  probeHotkey: 'dsh-quick-help:probe-hotkey',
++  configure: 'dsh-quick-help:configure',
++  suspend: 'dsh-quick-help:suspend',
++  rendererReady: 'dsh-quick-help:renderer-ready',
++  productOpenWheel: 'dsh-quick-help:product-open-wheel',
++  productOpenAsk: 'dsh-quick-help:product-open-ask',
++  productRetry: 'dsh-quick-help:product-retry',
++  /** Main process to overlay, for input events that arrive with no renderer waiting. */
++  inputEvent: 'dsh-quick-help:input-event',
++  helperStatus: 'dsh-quick-help:helper-status',
++} as const
++
++/**
++ * Where the plugin serves each overlay page.
++ *
++ * `dsh-app://app` is the hostname `main.ts` forwards to the Host with its
++ * authentication cookie, so a page loaded from here can call its own plugin's
++ * routes with no credential of its own.
++ */
++export const QUICK_HELP_ORIGIN = 'dsh-app://app'
++
++/** Host path of each overlay route. */
++export const QUICK_HELP_ROUTE_PATH: Record<QuickHelpRoute, string> = {
++  wheel: '/quick-help/wheel',
++  ask: '/quick-help/ask',
++  settings: '/quick-help/settings',
++}
+diff --git a/apps/desktop/src/quick-help-position.ts b/apps/desktop/src/quick-help-position.ts
+new file mode 100644
+--- /dev/null
++++ b/apps/desktop/src/quick-help-position.ts
+@@ -0,0 +1,63 @@
++/** Device-local position of the draggable quick-help chat window. */
++import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
++import { randomUUID } from 'node:crypto'
++import { dirname } from 'node:path'
++
++export interface AskPosition { readonly x: number; readonly y: number }
++export interface WorkArea extends AskPosition { readonly width: number; readonly height: number }
++
++/** Ignore malformed or partial state and use the pointer placement instead. */
++export function readAskPosition(path: string): AskPosition | undefined {
++  try {
++    const value: unknown = JSON.parse(readFileSync(path, 'utf8'))
++    if (typeof value !== 'object' || value === null || !('x' in value) || !('y' in value)) return undefined
++    const { x, y } = value
++    if (!Number.isSafeInteger(x) || !Number.isSafeInteger(y)) return undefined
++    return { x: x as number, y: y as number }
++  } catch (error) {
++    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
++    return undefined
++  }
++}
++
++/** Atomically replace only coordinates, with no chat or session data. */
++export function writeAskPosition(path: string, position: AskPosition): void {
++  const directory = dirname(path)
++  mkdirSync(directory, { recursive: true, mode: 0o700 })
++  const temporary = `${path}.${randomUUID()}.tmp`
++  try {
++    writeFileSync(temporary, `${JSON.stringify(position)}\n`, { flag: 'wx', mode: 0o600 })
++    renameSync(temporary, path)
++  } catch (error) {
++    try { unlinkSync(temporary) } catch { /* The temporary file was never created or is already gone. */ }
++    throw error
++  }
++}
++
++/** Keep the whole chat visible after display removal or resolution changes. */
++export function clampAskBounds(position: AskPosition, area: WorkArea, width: number, height: number): WorkArea {
++  const fittedWidth = Math.min(width, area.width)
++  const fittedHeight = Math.min(height, area.height)
++  return {
++    x: Math.round(Math.max(area.x, Math.min(position.x, area.x + area.width - fittedWidth))),
++    y: Math.round(Math.max(area.y, Math.min(position.y, area.y + area.height - fittedHeight))),
++    width: fittedWidth,
++    height: fittedHeight,
++  }
++}
++
++/** Place feedback at the selection point, clamping only at the display edge. */
++export function feedbackBounds(point: AskPosition, area: WorkArea): WorkArea {
++  return clampAskBounds({ x: point.x - 80, y: point.y - 80 }, area, 160, 160)
++}
++
++/** Keep the chat beside the selected effect, with a gap from its visible artwork. */
++export function askBesideFeedback(point: AskPosition & { readonly kind: 'ping' | 'emote' }, area: WorkArea): WorkArea {
++  const effect = feedbackBounds(point, area)
++  const center = { x: effect.x + effect.width / 2, y: effect.y + effect.height / 2 }
++  const distance = (point.kind === 'emote' ? 65 : 52) + 12
++  const right = center.x + distance
++  const left = center.x - distance - 360
++  const x = right + 360 <= area.x + area.width ? right : left
++  return clampAskBounds({ x, y: center.y - 36 }, area, 360, 400)
++}
+diff --git a/apps/desktop/src/quick-help-wiring.ts b/apps/desktop/src/quick-help-wiring.ts
+new file mode 100644
+--- /dev/null
++++ b/apps/desktop/src/quick-help-wiring.ts
+@@ -0,0 +1,152 @@
++/**
++ * Wires the quick-help feature into the desktop lifecycle.
++ *
++ * Three things happen here and nowhere else: the input helper's path is
++ * resolved, the IPC surface is installed, and the resources are released on quit.
++ *
++ * The feature is created eagerly at startup rather than on demand. The overlay
++ * window and the helper both have to exist before the first hotkey press, and a
++ * window created inside the keypress handler would show an empty rectangle while
++ * its document loaded — long enough to be noticed.
++ *
++ * Nothing here knows what a wheel slot does. The plugin owns that entirely and
++ * reaches this layer only through the narrow preload bridge.
++ */
++
++import { app } from 'electron'
++import { existsSync } from 'node:fs'
++import { join } from 'node:path'
++import { QuickHelpDesktop, quickHelpHelperPath } from './quick-help.ts'
++
++/** Where the packager places the helper inside a built application. */
++const PACKAGED_HELPER = join('quick-help', 'input-helper')
++
++/**
++ * Find the input helper.
++ *
++ * Three layouts are tried in order, and each miss is reported rather than guessed
++ * past: a helper that silently resolves to nothing shows up as a wheel which
++ * never opens, with nothing in the log to explain it.
++ *
++ * @returns The helper's path, and where it was found.
++ */
++export function resolveQuickHelpHelper(appPath: string, resourcesPath: string, packaged: boolean): { path: string; source: string } | { missing: string[] } {
++  const candidates: { path: string; source: string }[] = [
++    { path: join(resourcesPath, PACKAGED_HELPER), source: '打包产物 resources/' },
++    { path: quickHelpHelperPath(appPath, false), source: '开发态 ../../dsh-quick-help/build/' },
++    { path: quickHelpHelperPath(appPath, true), source: 'resources/quick-help/' },
++  ]
++  const missing: string[] = []
++  for (const candidate of candidates) {
++    if (existsSync(candidate.path)) {
++      // A packaged build must not silently load a development binary from a
++      // sibling directory: that would run unsigned native code in a shipped app.
++      if (packaged && !candidate.source.startsWith('打包产物')) continue
++      return candidate
++    }
++    missing.push(`${candidate.source}（${candidate.path}）`)
++  }
++  return { missing }
++}
++
++/** Construction parameters. */
++export interface QuickHelpWiringOptions {
++  /** Brings the main window forward, for "go to the main window". */
++  readonly focusMainWindow: () => void
++  /** Reports a status change so the panel can show it. */
++  readonly onStatus?: (status: string, detail?: string) => void
++  /**
++   * Directory the preload bundle was built into.
++   *
++   * Passed in rather than derived here because the desktop build owns its own
++   * output layout: this module must not have to know whether the bundle sits in
++   * `dist/`, `out/main/`, or somewhere a bundler chose.
++   */
++  readonly preloadDir: string
++  /**
++   * The Host's URL and cookie once the backend is ready, or undefined before that.
++   *
++   * Read per attempt by {@link QuickHelpDesktop}, because the feature is installed
++   * at startup and the Host finishes booting afterwards.
++   */
++  readonly hostEndpoint?: () => { readonly host: string; readonly cookie: string } | undefined
++}
++
++/** What the wiring produced. */
++export interface QuickHelpWiring {
++  readonly desktop: QuickHelpDesktop
++  openWheel(): Promise<void>
++  openAsk(): void
++  retry(): void
++  /** Release every global resource. Safe to call twice. */
++  dispose(): void
++}
++
++/**
++ * Locate the overlay preload.
++ *
++ * Probed rather than computed, because the desktop build emits preloads as `.cjs`
++ * next to the main bundle — a path built by hand with a `.js` extension resolves to
++ * nothing, and the result is a window with no bridge and no error: every gesture
++ * would arrive at a page that cannot hear it, which looks exactly like a dead
++ * hotkey.
++ */
++export function resolveQuickHelpPreload(preloadDir: string): string {
++  const candidates = [
++    join(preloadDir, 'preload-quick-help.cjs'),
++    join(preloadDir, 'main', 'preload-quick-help.cjs'),
++    // The unbundled path, which is what a dev run loads directly.
++    join(preloadDir, 'types', 'preload-quick-help.js'),
++  ]
++  for (const candidate of candidates) {
++    if (existsSync(candidate)) return candidate
++  }
++  // Reported even when absent so the failure names a real file rather than an
++  // empty string; Electron will report the load error for it.
++  return candidates[0] ?? join(preloadDir, 'preload-quick-help.cjs')
++}
++
++/**
++ * Create and install the feature.
++ *
++ * A missing helper is not fatal: the application starts, the panel explains what
++ * is absent, and the rest of DSH is unaffected. Refusing to boot over an optional
++ * feature would be a far worse failure than a wheel that does not open.
++ *
++ * @returns The wiring, or the reason the feature is unavailable.
++ */
++export function installQuickHelp(options: QuickHelpWiringOptions): QuickHelpWiring {
++  const appPath = app.getAppPath()
++  const packaged = app.isPackaged
++  const found = resolveQuickHelpHelper(appPath, process.resourcesPath, packaged)
++  const report = (status: string, detail?: string): void => { options.onStatus?.(status, detail) }
++  const preloadPath = resolveQuickHelpPreload(options.preloadDir)
++  const base = {
++    preloadPath,
++    compactChat: true,
++    askPositionPath: join(app.getPath('userData'), 'quick-help', 'window-position.json'),
++    focusMainWindow: options.focusMainWindow,
++    ...(options.onStatus === undefined ? {} : { onStatus: report }),
++    ...(options.hostEndpoint === undefined ? {} : { hostEndpoint: options.hostEndpoint }),
++  }
++
++  if ('missing' in found) {
++    report('crashed', `找不到输入助手，已尝试：${found.missing.join('；')}。轮盘不会响应。`)
++    // An empty path can never spawn, and `supported` is still true so the panel
++    // can explain the absence rather than claiming the platform is unsupported.
++    const desktop = new QuickHelpDesktop({ helperPath: '', ...base })
++    desktop.install()
++    return { desktop, openWheel: () => desktop.openWheel(), openAsk: () => desktop.openAsk(), retry: () => desktop.retry(), dispose: () => { desktop.dispose() } }
++  }
++
++  const desktop = new QuickHelpDesktop({ helperPath: found.path, ...base })
++  desktop.install()
++
++  return {
++    desktop,
++    openWheel: () => desktop.openWheel(),
++    openAsk: () => desktop.openAsk(),
++    retry: () => desktop.retry(),
++    dispose: () => { desktop.dispose() },
++  }
++}
+diff --git a/apps/desktop/src/quick-help.ts b/apps/desktop/src/quick-help.ts
+new file mode 100644
+--- /dev/null
++++ b/apps/desktop/src/quick-help.ts
+@@ -0,0 +1,1235 @@
++/**
++ * The three capabilities a system-wide launcher needs and a Host plugin cannot
++ * provide: a floating window, a global-keyboard probe, and a managed native input
++ * helper.
++ *
++ * DSH plugins run in the Host process, which has no `BrowserWindow` and no
++ * shortcut registry. Both belong to the Electron main process, so they live here —
++ * and nothing else does. There is no wheel geometry, no action list, no model call,
++ * and no plugin state in this file. The plugin owns all of that; this layer only
++ * moves a window, reports input, and keeps a child process alive.
++ *
++ * The hotkey is deliberately *not* registered. A held `globalShortcut` is removed
++ * from every other application, which is the opposite of what this feature wants;
++ * the input helper observes key events instead and swallows only the exact chord.
++ * The only thing asked of the shortcut registry is whether a combination is already
++ * taken, and the answer is read and released in the same call.
++ *
++ * The overlay's documents are the plugin's own, served over the Host's HTTP
++ * surface through `dsh-app://app`. Loading them from the application bundle
++ * instead would mean this file also had to proxy the ask window's streaming
++ * answers, which is exactly the kind of business logic that does not belong on
++ * the Electron side of the fence.
++ *
++ * Four properties this file is responsible for:
++ *
++ *  - The overlay cannot navigate anywhere. It loads one plugin route per view,
++ *    and `will-navigate` cancels anything else, so a plugin cannot turn this
++ *    window into a general-purpose view of the app's own scheme.
++ *  - Only the overlay may drive these channels. The sender check requires the
++ *    exact window this class created, not merely a document from the same
++ *    origin — the main window is on that origin too.
++ *  - Teardown is total. Disposing removes the event tap by shutting the helper
++ *    down, destroys the window, and drops every listener. An event tap left
++ *    installed would swallow the user's keystrokes with nobody listening, which is
++ *    the one failure this feature must never cause.
++ *  - A helper that will not start is reported, not retried forever. Permission
++ *    failures in particular are not crashes, and looping on them would look like
++ *    a broken machine.
++ */
++
++import { BrowserWindow, globalShortcut, ipcMain, screen, systemPreferences } from 'electron'
++import { spawn } from 'node:child_process'
++import type { ChildProcess } from 'node:child_process'
++import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
++import { tmpdir } from 'node:os'
++import { join } from 'node:path'
++import type { IpcMainInvokeEvent } from 'electron'
++import type {
++  QuickHelpBindResult,
++  QuickHelpEnvironment,
++  QuickHelpFeedbackRequest,
++  QuickHelpHelperConfig,
++  QuickHelpInputEvent,
++  QuickHelpRoute,
++  QuickHelpWindowRequest,
++} from './quick-help-ipc.ts'
++import { QUICK_HELP_IPC, QUICK_HELP_ORIGIN, QUICK_HELP_ROUTE_PATH } from './quick-help-ipc.ts'
++import { forwardWebRequest } from './web-document.ts'
++import { askBesideFeedback, feedbackBounds, clampAskBounds, readAskPosition, writeAskPosition } from './quick-help-position.ts'
++import type { AskPosition, WorkArea } from './quick-help-position.ts'
++
++/** Why the helper is not running. */
++type HelperStatus = QuickHelpEnvironment['helper']
++
++/** Construction parameters. */
++export interface QuickHelpDesktopOptions {
++  /** Absolute path of the compiled input helper. */
++  readonly helperPath: string
++  /** How long the helper may be down before restarts stop. */
++  readonly restartBudget?: number
++  /** Notified when the helper's status changes, so the plugin can persist it. */
++  readonly onStatus?: (status: HelperStatus, detail?: string) => void
++  /** Brings the main application window forward. */
++  readonly focusMainWindow?: () => void
++  /**
++   * Absolute path of the preload that installs the overlay's bridge.
++   *
++   * Required rather than optional: without it the overlay's document runs with no
++   * bridge at all, every wheel gesture would arrive at a page that cannot hear it,
++   * and the failure would look like a dead hotkey rather than a missing file.
++   */
++  readonly preloadPath: string
++  /** Use the complete application conversation in the compact window. */
++  readonly compactChat?: boolean
++  /**
++   * The Host's URL and cookie, or undefined until the backend is ready.
++   *
++   * Read on each attempt rather than captured, because the desktop layer installs
++   * this feature at startup and the Host comes up afterwards.
++   */
++  readonly hostEndpoint?: () => { readonly host: string; readonly cookie: string } | undefined
++  /** Electron userData file containing only the chat window's last dragged coordinates. */
++  readonly askPositionPath?: string
++  /**
++   * How many times to retry before giving up on reaching the Host.
++   *
++   * Bounded on purpose: a plugin that never serves the route must not leave a timer
++   * running for the life of the process.
++   */
++  readonly hostSyncAttempts?: number
++}
++
++/** The main-process surface the overlay preload drives. */
++export class QuickHelpDesktop {
++  private helper: ChildProcess | undefined
++  private status: HelperStatus = 'stopped'
++  private overlay: BrowserWindow | undefined
++  private feedbackOverlay: BrowserWindow | undefined
++  private feedbackTimer: NodeJS.Timeout | undefined
++  private feedbackGeneration = 0
++  private feedbackStartedGeneration = 0
++  private readonly feedbackIds = new Set<string>()
++  private pendingCapture: Buffer | undefined
++  private capturing = false
++  private captureChild: ChildProcess | undefined
++  private captureOwner: string | undefined
++  private dragOrigin: { cursor: { x: number; y: number }; bounds: WorkArea } | undefined
++  private compactSessionId: string | undefined
++  private showGeneration = 0
++  private pendingCompactFeedback: QuickHelpFeedbackRequest | undefined
++  private overlayRoute: string | undefined
++  private overlayState: string | undefined
++  private overlayReady = false
++  private overlayLoading = false
++  private restarts = 0
++  private restartWindowStart = 0
++  private disposed = false
++  private readonly restartBudget: number
++  private readonly helperBuffer = { text: '' }
++  private testWheelTimer: NodeJS.Timeout | undefined
++  private testWheelAutoHideMs: number | undefined
++  private wheelOpenAck: { resolve: () => void; reject: (error: Error) => void; timer: NodeJS.Timeout } | undefined
++  private overlayReadyAttempts = 0
++  /**
++   * Events that arrived before the overlay finished loading.
++   *
++   * The very first wheel opening races the page load, and dropping that first
++   * event would mean the feature appeared broken on first use and worked on
++   * every use after it.
++   */
++  private pending: QuickHelpInputEvent[] = []
++  private statusWhileLoading: HelperStatus | undefined
++  /** Timer for the bounded retry that reaches the Host for its trigger config. */
++  private hostSyncTimer: NodeJS.Timeout | undefined
++  private hostSyncAttemptsLeft = 0
++  /** Whether the helper already has a chord, so retries stop once it does. */
++  private helperConfigured = false
++  private lastConfig = ''
++  private lastHelperConfig: QuickHelpHelperConfig | undefined
++  private overlayReadyTimer: NodeJS.Timeout | undefined
++  private askPosition: AskPosition | undefined
++  private programmedBounds: WorkArea | undefined
++  private positionWriteTimer: NodeJS.Timeout | undefined
++  private retryingHelper: ChildProcess | undefined
++  private helperReadyTimer: NodeJS.Timeout | undefined
++  private timedOutHelper: ChildProcess | undefined
++
++  /** @param options - Paths and lifecycle hooks. */
++  constructor(private readonly options: QuickHelpDesktopOptions) {
++    this.restartBudget = options.restartBudget ?? 3
++    this.hostSyncAttemptsLeft = options.hostSyncAttempts ?? 30
++    if (options.askPositionPath !== undefined) this.askPosition = readAskPosition(options.askPositionPath)
++  }
++
++  /**
++   * Ask the plugin what the helper should watch, and tell it.
++   *
++   * The trigger chord lives in the plugin's settings, and the only channel from
++   * the Host to the main process is HTTP — so the main process asks. Without this
++   * the helper is never configured until the user opens the settings page, and a
++   * first run with a silent feature is indistinguishable from a broken one.
++   *
++   * Retries because the Host is not up when this is installed; bounded because a
++   * plugin that never serves the route must not leave a timer for the life of the
++   * process.
++   */
++  async syncHelperConfig(): Promise<void> {
++    if (this.disposed || !this.supported) return
++    const endpoint = this.options.hostEndpoint?.()
++    if (endpoint === undefined) {
++      this.scheduleHostSync()
++      return
++    }
++    try {
++      const request = new Request(`${QUICK_HELP_ORIGIN}/quick-help/api/helper-config`, {
++        headers: { origin: QUICK_HELP_ORIGIN },
++      })
++      const response = await forwardWebRequest(request, endpoint.host, endpoint.cookie)
++      if (!response.ok) {
++        // The Host answers before the plugin's routes are mounted, which is normal
++        // on a cold start and is exactly what the retry is for.
++        this.scheduleHostSync()
++        return
++      }
++      const body = await response.json() as Partial<QuickHelpHelperConfig>
++      const config: QuickHelpHelperConfig = {
++        triggerVk: Number(body.triggerVk ?? 0),
++        modifierMask: Number(body.modifierMask ?? 0),
++        holdMode: body.holdMode === 1 ? 1 : 0,
++        dragThreshold: Number(body.dragThreshold ?? 12),
++        watchdogMs: Number(body.watchdogMs ?? 12_000),
++        enabled: body.enabled === 1 ? 1 : 0,
++      }
++      const serialized = JSON.stringify(config)
++      if (serialized !== this.lastConfig) {
++        this.configure(config)
++        this.lastConfig = serialized
++      }
++      this.helperConfigured = true
++      this.scheduleHostSync()
++    } catch (error) {
++      this.options.onStatus?.('stopped', error instanceof Error ? error.message : String(error))
++      this.scheduleHostSync()
++    }
++  }
++
++  /** Retry `syncHelperConfig` later, unless the budget or the helper is settled. */
++  private scheduleHostSync(): void {
++    if (this.disposed) return
++    if (!this.helperConfigured && this.hostSyncAttemptsLeft <= 0) return
++    if (this.hostSyncTimer !== undefined) return
++    if (!this.helperConfigured) this.hostSyncAttemptsLeft -= 1
++    this.hostSyncTimer = setTimeout(() => {
++      this.hostSyncTimer = undefined
++      void this.syncHelperConfig()
++    }, 2_000)
++    // Deliberately not `unref`ed: the point is to keep trying while the app is up.
++  }
++
++  /** Whether this machine can run the wheel at all. */
++  get supported(): boolean {
++    // Only macOS is implemented. The interface exists on every platform so a
++    // plugin can ask, and the honest answer here is "no" rather than a hotkey
++    // that registers and does nothing.
++    return process.platform === 'darwin'
++  }
++
++  /** Current helper status. */
++  get helperStatus(): HelperStatus {
++    return this.status
++  }
++
++  /** Open the wheel on demand from the product panel. */
++  openWheel(): Promise<void> {
++    if (!this.supported) return Promise.reject(new Error('全局轮盘仅支持 macOS'))
++    const point = screen.getCursorScreenPoint()
++    return new Promise((resolve, reject) => {
++      if (this.wheelOpenAck !== undefined) {
++        clearTimeout(this.wheelOpenAck.timer)
++        this.wheelOpenAck.reject(new Error('轮盘请求已被新的请求替代'))
++      }
++      const opening: QuickHelpInputEvent = { type: 'wheelOpen', manual: true, x: point.x, y: point.y }
++      const timer = setTimeout(() => {
++        if (this.wheelOpenAck?.timer === timer) this.wheelOpenAck = undefined
++        this.pending = this.pending.filter(event => event !== opening)
++        this.testWheelAutoHideMs = undefined
++        reject(new Error('轮盘页面未在 6 秒内确认显示；请检查 quick-help 页面加载和 Host 路由。'))
++      }, 6_000)
++      this.wheelOpenAck = { resolve, reject, timer }
++      this.loadWheelPage(opening, 15_000)
++    })
++  }
++
++  /** Retry overlay loading and helper configuration when the Host reaches ready. */
++  hostReady(): void {
++    if (this.disposed) return
++    this.hostSyncAttemptsLeft = 30
++    if (!this.helperConfigured) void this.syncHelperConfig()
++    if (this.overlayRoute !== QUICK_HELP_ROUTE_PATH.wheel || !this.overlayReady) {
++      const opening = this.pending.find(event => event.type === 'wheelOpen')
++      const autoHideMs = this.testWheelAutoHideMs
++      this.overlayRoute = undefined
++      this.loadWheelPage(opening, autoHideMs)
++    }
++  }
++
++  /** Open the ask window on demand from the product panel. */
++  openAsk(): void {
++    if (!this.supported) return
++    void Promise.resolve(this.show({ route: 'ask', focusable: true, clickThrough: false }))
++      .catch(error => this.options.onStatus?.('crashed', error instanceof Error ? error.message : String(error)))
++  }
++
++  /** Reset the bounded first-run retry budget and request a fresh configuration. */
++  retry(): void {
++    if (!this.supported) return
++    this.helperConfigured = false
++    this.lastConfig = ''
++    this.hostSyncAttemptsLeft = 30
++    if (this.helper !== undefined) {
++      // A failed tap can leave the helper's stdin loop alive after its tap thread
++      // has exited. Its process must end before another one may own the tap.
++      const old = this.helper
++      if (this.retryingHelper === old) return
++      this.retryingHelper = old
++      try { old.stdin?.end('{"type":"shutdown"}\n') } catch { old.kill('SIGTERM') }
++      const escalate = setTimeout(() => { if (this.helper === old) old.kill('SIGKILL') }, 1500)
++      old.once('exit', () => clearTimeout(escalate))
++      this.setStatus('starting')
++      return
++    }
++    this.setStatus('starting')
++    void this.syncHelperConfig()
++  }
++
++  /**
++   * Register the application-lifetime IPC surface.
++   *
++   * Every handler runs {@link assertOverlaySender} first. That check names this
++   * class's own window rather than a hostname, because the main window shares the
++   * overlay's origin and a hostname test would let the product frame drive a
++   * global input hook.
++   */
++  install(): void {
++    ipcMain.handle(QUICK_HELP_IPC.environment, (event) => {
++      this.assertOverlaySender(event)
++      return this.environment()
++    })
++    ipcMain.handle(QUICK_HELP_IPC.show, (event, request: QuickHelpWindowRequest) => {
++      this.assertOverlaySender(event)
++      if (request === null || typeof request !== 'object') throw new Error('quick help: invalid window request')
++      return this.show(request)
++    })
++    ipcMain.handle(QUICK_HELP_IPC.feedback, (event, request: QuickHelpFeedbackRequest) => {
++      this.assertOverlaySender(event)
++      this.showFeedback(request)
++    })
++    ipcMain.handle(QUICK_HELP_IPC.feedbackReady, (event, generation: number) => {
++      const window = this.feedbackOverlay
++      if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame) throw new Error('quick help: rejected feedback renderer')
++      if (generation !== this.feedbackGeneration || generation === this.feedbackStartedGeneration) return
++      this.feedbackStartedGeneration = generation
++      if (this.feedbackTimer !== undefined) clearTimeout(this.feedbackTimer)
++      this.feedbackTimer = setTimeout(() => { this.feedbackTimer = undefined; if (!window.isDestroyed()) window.hide() }, 4_200)
++    })
++    ipcMain.handle(QUICK_HELP_IPC.captureSelection, async (event, owner: unknown) => {
++      this.assertOverlaySender(event)
++      if (typeof owner !== 'string' || !owner || owner.length > 256) throw new Error('截图需要明确的会话。')
++      return this.captureSelection(owner)
++    })
++    ipcMain.handle(QUICK_HELP_IPC.readCapture, (event, owner: unknown) => {
++      this.assertOverlaySender(event)
++      return this.pendingCapture === undefined || owner !== this.captureOwner ? undefined : `data:image/png;base64,${this.pendingCapture.toString('base64')}`
++    })
++    ipcMain.handle(QUICK_HELP_IPC.stageCapture, (event, owner: unknown, dataUrl: unknown) => {
++      this.assertOverlaySender(event)
++      if (typeof owner !== 'string' || !owner || owner.length > 256 || typeof dataUrl !== 'string'
++        || !dataUrl.startsWith('data:image/png;base64,') || dataUrl.length > 28 * 1024 * 1024) throw new Error('无效的待发送截图。')
++      const encoded = dataUrl.slice('data:image/png;base64,'.length)
++      const bytes = Buffer.from(encoded, 'base64')
++      if (bytes.toString('base64') !== encoded || !bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) throw new Error('待发送图片不是 PNG。')
++      this.pendingCapture = bytes
++      this.captureOwner = owner
++    })
++    ipcMain.handle(QUICK_HELP_IPC.discardCapture, (event) => {
++      this.assertOverlaySender(event)
++      this.pendingCapture = undefined
++    })
++    ipcMain.handle(QUICK_HELP_IPC.dragWindow, (event, phase: unknown) => {
++      this.assertOverlaySender(event)
++      const window = this.overlay
++      if (!window || window.isDestroyed() || this.overlayRoute !== QUICK_HELP_ROUTE_PATH.ask || !window.isVisible()) return
++      if (phase === 'start') {
++        this.dragOrigin = { cursor: screen.getCursorScreenPoint(), bounds: window.getBounds() }
++        return
++      }
++      const origin = this.dragOrigin
++      if (!origin || (phase !== 'move' && phase !== 'end')) return
++      const cursor = screen.getCursorScreenPoint()
++      const position = { x: origin.bounds.x + cursor.x - origin.cursor.x, y: origin.bounds.y + cursor.y - origin.cursor.y }
++      const area = screen.getDisplayNearestPoint(cursor).workArea
++      const bounds = clampAskBounds(position, area, 360, 400)
++      this.programmedBounds = undefined
++      window.setBounds(bounds)
++      if (phase === 'end') {
++        this.dragOrigin = undefined
++        this.askPosition = { x: bounds.x, y: bounds.y }
++        this.saveAskPosition()
++      }
++    })
++    ipcMain.handle(QUICK_HELP_IPC.hide, (event, route?: QuickHelpRoute) => {
++      this.assertOverlaySender(event)
++      // A delayed blur from an old page must not hide a newer route in this
++      // reused BrowserWindow (for example ask → wheel on the next gesture).
++      if (route === undefined || this.overlayRoute !== QUICK_HELP_ROUTE_PATH[route]) return
++      this.hide()
++    })
++    ipcMain.handle(QUICK_HELP_IPC.focusMain, (event) => {
++      this.assertOverlaySender(event)
++      this.options.focusMainWindow?.()
++    })
++    ipcMain.handle(QUICK_HELP_IPC.probeHotkey, (event, accelerator: unknown) => {
++      this.assertOverlaySender(event)
++      if (typeof accelerator !== 'string') throw new Error('quick help: hotkey must be text')
++      return this.probeHotkey(accelerator)
++    })
++    ipcMain.handle(QUICK_HELP_IPC.configure, (event, config: QuickHelpHelperConfig) => {
++      this.assertOverlaySender(event)
++      this.configure(config)
++    })
++    ipcMain.handle(QUICK_HELP_IPC.suspend, (event) => {
++      this.assertOverlaySender(event)
++      this.suspend()
++    })
++    ipcMain.handle(QUICK_HELP_IPC.rendererReady, (event) => {
++      this.assertOverlaySender(event)
++      this.markRendererReady()
++    })
++    // The first native gesture arrives before any renderer could ask to show
++    // itself. Load the wheel hidden at startup so it is already listening when
++    // the helper reports its first wheelOpen event.
++    this.loadWheelPage()
++    // Last, so the handlers exist before anything can call them.
++    void this.syncHelperConfig()
++  }
++
++  /** What the overlay needs to know about this machine. */
++  environment(): QuickHelpEnvironment {
++    const cursor = screen.getCursorScreenPoint()
++    return {
++      supported: this.supported,
++      accessibility: systemPreferences.isTrustedAccessibilityClient(false),
++      helper: this.status,
++      cursor: { x: cursor.x, y: cursor.y },
++      displays: screen.getAllDisplays().map(display => ({
++        id: display.id,
++        x: display.workArea.x,
++        y: display.workArea.y,
++        width: display.workArea.width,
++        height: display.workArea.height,
++        scale: display.scaleFactor,
++      })),
++    }
++  }
++
++  /**
++   * Ask whether a chord is already taken, without taking it.
++   *
++   * `globalShortcut.register` is the only honest way to find out — Electron returns
++   * false rather than throwing when another application owns the combination. But
++   * holding it is exactly what a global hotkey must not do: a registered
++   * combination is removed from every other application, which breaks the user's
++   * machine to serve a plugin.
++   *
++   * So it is treated as a probe: register, read the answer, release. The wheel
++   * itself is driven by the input helper, which observes key events and swallows
++   * only the exact chord, leaving everything else — including the trigger key
++   * pressed on its own — to the application underneath.
++   *
++   * @returns whether the chord was free, and the same accelerator for display.
++   */
++  probeHotkey(accelerator: string): QuickHelpBindResult {
++    if (!this.supported) return { ok: false, available: false, reason: '当前系统暂不支持全局轮盘。' }
++    if (accelerator.trim() === '') return { ok: false, available: false, reason: '快捷键不能为空。' }
++    if (/^(control|ctrl)$/iu.test(accelerator.trim())) {
++      return { ok: true, available: true, reason: 'Control 使用按住并移动手势，单独按下及组合键照常传递。' }
++    }
++    let available = false
++    try {
++      available = globalShortcut.register(accelerator, () => {})
++    } catch (error) {
++      return {
++        ok: false,
++        available: false,
++        reason: `无法检查 ${accelerator}：${error instanceof Error ? error.message : String(error)}`,
++      }
++    }
++    // Released in the same tick as the probe. A `finally` is not enough on its own:
++    // `unregister` itself can throw for an accelerator the OS rejected, and
++    // swallowing that must not turn into a held shortcut.
++    if (available) {
++      try {
++        globalShortcut.unregister(accelerator)
++      } catch {
++        // Nothing to do: the chord was never ours to keep.
++      }
++    }
++    return {
++      ok: true,
++      available,
++      reason: available
++        ? `${accelerator} 未被其他应用占用。`
++        : `${accelerator} 已被其他应用占用；轮盘不会抢占它。`,
++    }
++  }
++
++  /**
++   * Show or move the overlay window.
++   *
++   * The window is deliberately reused across routes: creating a second one per
++   * gesture leaves windows behind when a gesture is cancelled, and the user sees
++   * them accumulate.
++   */
++  show(request: QuickHelpWindowRequest): void | Promise<void> {
++    const generation = ++this.showGeneration
++    if (request.route === 'ask' && this.options.compactChat) return this.showCompact(request, generation)
++    this.present(request)
++  }
++
++  /** Resolve the formal conversation before the full Client retains it. */
++  private async showCompact(request: QuickHelpWindowRequest, generation: number): Promise<void> {
++    const endpoint = this.options.hostEndpoint?.()
++    if (!endpoint) throw new Error('DSH 会话服务尚未就绪，请稍后重试。')
++    const response = await forwardWebRequest(new Request(`${QUICK_HELP_ORIGIN}/quick-help/api/compact-session`, {
++      headers: { origin: QUICK_HELP_ORIGIN }, signal: AbortSignal.timeout(10_000),
++    }), endpoint.host, endpoint.cookie)
++    if (!response.ok) throw new Error('无法打开正式会话，请检查 DSH 会话状态。')
++    const result: unknown = await response.json()
++    if (!result || typeof result !== 'object' || !('sessionId' in result) || typeof result.sessionId !== 'string'
++      || !result.sessionId || result.sessionId.length > 256) throw new Error('DSH 返回了无效的会话标识。')
++    if (this.disposed || generation !== this.showGeneration) return
++    this.compactSessionId = result.sessionId
++    this.present(request)
++  }
++
++  private present(request: QuickHelpWindowRequest): void {
++    if (!this.supported) return
++    const path = QUICK_HELP_ROUTE_PATH[request.route]
++    if (path === undefined) return
++    const window = this.ensureOverlay()
++    window.setMovable(request.route === 'ask')
++    if (request.route === 'wheel' && request.bounds === undefined) {
++      // A wheel without renderer-computed bounds must never reveal the default
++      // BrowserWindow rectangle over the user's other applications.
++      window.setIgnoreMouseEvents(true, { forward: true })
++      window.hide()
++      return
++    }
++    const compact = request.route === 'ask' && this.options.compactChat && this.compactSessionId
++    const state = compact || request.state
++    if (this.overlayRoute !== path || this.overlayState !== state) {
++      this.overlayRoute = path
++      this.overlayState = state
++      // A route change invalidates the load barrier: events arriving now belong
++      // to the new document, and the old one must not drain them.
++      this.overlayReady = false
++      this.pending.length = 0
++      const query = compact ? `?dshQuickHelpSession=${encodeURIComponent(compact)}` : request.state === undefined ? '' : `?state=${encodeURIComponent(request.state)}`
++      void window.loadURL(`${QUICK_HELP_ORIGIN}${compact ? '/' : path}${query}`).catch((error: unknown) => {
++        this.options.onStatus?.('crashed', error instanceof Error ? error.message : String(error))
++      })
++    }
++    if (process.platform === 'darwin') {
++      // The ask page uses the native under-window material. The wheel stays
++      // genuinely transparent so its SVG silhouette does not acquire a panel.
++      window.setVibrancy(request.route === 'ask' ? 'under-window' : null)
++      window.setBackgroundColor('#00000000')
++    }
++    if (request.route === 'ask') {
++      // Explicit wheel selections take priority over an earlier dragged position.
++      const feedback = request.feedback && Number.isFinite(request.feedback.x) && Number.isFinite(request.feedback.y) ? request.feedback : undefined
++      const point = feedback ?? screen.getCursorScreenPoint()
++      const position = this.askPosition ?? request.bounds ?? { x: point.x + 18, y: point.y + 18 }
++      const display = screen.getDisplayNearestPoint(feedback ?? position)
++      const area = display.workArea
++      const bounds = feedback ? askBesideFeedback(feedback, area) : clampAskBounds(position, area, 360, 400)
++      this.askPosition = { x: bounds.x, y: bounds.y }
++      this.programmedBounds = bounds
++      window.setBounds(bounds)
++    } else if (request.bounds !== undefined) {
++      this.programmedBounds = request.bounds
++      window.setBounds(request.bounds)
++    }
++    window.setFocusable(request.focusable ?? false)
++    window.setIgnoreMouseEvents(request.clickThrough ?? false, { forward: true })
++    if (request.focusable === true) {
++      window.show()
++      window.focus()
++    } else {
++      // `showInactive` keeps the application the user is working in focused, so
++      // the wheel appears without stealing the keystrokes they are mid-way through.
++      window.showInactive()
++    }
++    if (request.route === 'ask' && request.feedback) {
++      if (compact && !this.overlayReady) this.pendingCompactFeedback = request.feedback
++      else this.showFeedback(request.feedback)
++    }
++    if (request.route === 'wheel' && request.bounds !== undefined && this.wheelOpenAck !== undefined) {
++      clearTimeout(this.wheelOpenAck.timer)
++      this.wheelOpenAck.resolve()
++      this.wheelOpenAck = undefined
++    }
++    if (request.route === 'wheel' && this.testWheelAutoHideMs !== undefined) {
++      const autoHideMs = this.testWheelAutoHideMs
++      this.testWheelAutoHideMs = undefined
++      if (this.testWheelTimer !== undefined) clearTimeout(this.testWheelTimer)
++      this.testWheelTimer = setTimeout(() => {
++        this.testWheelTimer = undefined
++        if (this.overlay === window && window.isVisible()) this.hide()
++      }, autoHideMs)
++    }
++  }
++
++  /** Render accepted-action media in a separate click-through window. */
++  private showFeedback(request: QuickHelpFeedbackRequest): void {
++    const ownAsset = /^\/quick-help\/asset\/(?:textures|emotes|sounds)\/[\w.-]+\.(?:png|webp|ogg|wav|mp3)$/
++    if (!ownAsset.test(request.image) || (request.animation !== undefined && !ownAsset.test(request.animation))
++      || (request.sound !== undefined && !ownAsset.test(request.sound))
++      || !Number.isFinite(request.x) || !Number.isFinite(request.y) || !Number.isFinite(request.volume)) return
++    if (request.id !== undefined) {
++      if (typeof request.id !== 'string' || !request.id || request.id.length > 128 || this.feedbackIds.has(request.id)) return
++      this.feedbackIds.add(request.id)
++      if (this.feedbackIds.size > 32) this.feedbackIds.delete(this.feedbackIds.values().next().value!)
++    }
++    const window = this.feedbackOverlay?.isDestroyed() === false ? this.feedbackOverlay : new BrowserWindow({
++      show: false, frame: false, transparent: true, resizable: false, movable: false,
++      minimizable: false, maximizable: false, fullscreenable: false, hasShadow: false,
++      skipTaskbar: true, alwaysOnTop: true, focusable: false, width: 160, height: 160,
++      type: 'panel',
++      webPreferences: { preload: this.options.preloadPath, contextIsolation: true, nodeIntegration: false, sandbox: true, autoplayPolicy: 'no-user-gesture-required' },
++    })
++    this.feedbackOverlay = window
++    const generation = ++this.feedbackGeneration
++    window.setIgnoreMouseEvents(true, { forward: true })
++    const area = screen.getDisplayNearestPoint({ x: request.x, y: request.y }).workArea
++    window.setBounds(feedbackBounds(request, area))
++    const colors: Readonly<Record<string, string>> = {
++      'assist_me.png': '#56d43c', 'need_vision.png': '#56d43c',
++      'omw.png': '#2e8bff', 'pingwheel_retreatrender.png': '#ff3b55',
++    }
++    const state = encodeURIComponent(JSON.stringify({ ...request, generation, bounds: window.getBounds(), color: colors[request.image.split('/').at(-1) ?? ''] }))
++    if (this.feedbackTimer !== undefined) clearTimeout(this.feedbackTimer)
++    void window.loadURL(`${QUICK_HELP_ORIGIN}/quick-help/feedback?state=${state}`).then(() => {
++      if (this.feedbackOverlay !== window || window.isDestroyed() || generation !== this.feedbackGeneration) return
++      window.showInactive()
++      this.postToOverlay(window, QUICK_HELP_IPC.feedbackShown, generation)
++      // A fallback closes broken pages; decoded, visible artwork starts its own lifetime through feedbackReady.
++      if (this.feedbackStartedGeneration === generation) return
++      this.feedbackTimer = setTimeout(() => {
++        this.feedbackTimer = undefined
++        if (!window.isDestroyed()) window.hide()
++      }, 10_000)
++    }).catch(error => { if (request.id) this.feedbackIds.delete(request.id); console.warn('quick help feedback page failed:', error) })
++  }
++
++  /** Let macOS select a region; retain PNG bytes only until the user sends or deletes it. */
++  private async captureSelection(owner: string): Promise<'captured' | 'cancelled'> {
++    if (this.capturing) throw new Error('正在框选屏幕，请先完成或按 Esc 取消。')
++    this.capturing = true
++    const access = systemPreferences.getMediaAccessStatus('screen')
++    if (access === 'denied' || access === 'restricted') {
++      this.capturing = false
++      throw new Error('截图权限未开启。请在系统设置 → 隐私与安全性 → 屏幕与系统音频录制中允许当前 DeepSeek Harness，再重新截图。')
++    }
++    this.hide()
++    const directory = mkdtempSync(join(tmpdir(), 'dsh-qh-capture-'))
++    const path = join(directory, 'selection.png')
++    try {
++      const child = spawn('/usr/sbin/screencapture', ['-i', '-t', 'png', '-x', path], { stdio: 'ignore', env: { PATH: '/usr/bin:/bin:/usr/sbin:/sbin' } })
++      this.captureChild = child
++      const code = await new Promise<number>((resolve, reject) => {
++        child.once('error', reject)
++        child.once('exit', value => resolve(value ?? 1))
++      })
++      if (code !== 0 || this.disposed || !existsSync(path)) return 'cancelled'
++      const image = readFileSync(path)
++      if (image.length > 20 * 1024 * 1024 || image.length < 24
++        || !image.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) {
++        throw new Error('截图不是有效 PNG，或超过 20 MB。请缩小框选区域后重试。')
++      }
++      this.pendingCapture = image
++      this.captureOwner = owner
++      return 'captured'
++    } finally {
++      this.captureChild = undefined
++      this.capturing = false
++      rmSync(directory, { recursive: true, force: true })
++    }
++  }
++
++  /** Hide the overlay without destroying it. */
++  hide(): void {
++    this.dragOrigin = undefined
++    if (!this.overlayReady) this.pending.length = 0
++    if (this.overlay === undefined || this.overlay.isDestroyed()) return
++    if (this.testWheelTimer !== undefined) {
++      clearTimeout(this.testWheelTimer)
++      this.testWheelTimer = undefined
++    }
++    this.testWheelAutoHideMs = undefined
++    this.rejectWheelOpen(new Error('轮盘已关闭'))
++    this.overlay.setIgnoreMouseEvents(true, { forward: true })
++    this.overlay.hide()
++  }
++
++  /**
++   * Start the helper if needed and push configuration to it.
++   *
++   * Also what settles the startup retry: once the helper holds a chord, the pull
++   * from the Host has nothing left to do.
++   */
++  configure(config: QuickHelpHelperConfig): void {
++    if (!this.supported) return
++    this.lastHelperConfig = config
++    this.start()
++    this.writeHelper({ type: 'config', ...config })
++    this.helperConfigured = true
++  }
++
++  /** Stop capturing input while leaving everything in place. */
++  suspend(): void {
++    this.writeHelper({ type: 'setEnabled', enabled: false })
++  }
++
++  /**
++   * Release every global resource.
++   *
++   * Called when the owning plugin unloads or the application quits. Order
++   * matters: stop receiving first, then stop the helper, then destroy the window,
++   * so nothing can arrive for a window that is gone.
++   *
++   * There is no shortcut to release: the chord was only ever probed, never held.
++   */
++  dispose(): void {
++    if (this.disposed) return
++    this.disposed = true
++    // Before `stop`, so a retry cannot resurrect the helper on its way out.
++    if (this.hostSyncTimer !== undefined) {
++      clearTimeout(this.hostSyncTimer)
++      this.hostSyncTimer = undefined
++    }
++    if (this.overlayReadyTimer !== undefined) {
++      clearTimeout(this.overlayReadyTimer)
++      this.overlayReadyTimer = undefined
++    }
++    if (this.testWheelTimer !== undefined) {
++      clearTimeout(this.testWheelTimer)
++      this.testWheelTimer = undefined
++    }
++    this.stop()
++    if (this.positionWriteTimer !== undefined) {
++      clearTimeout(this.positionWriteTimer)
++      this.positionWriteTimer = undefined
++      this.saveAskPosition()
++    }
++    if (this.helperReadyTimer !== undefined) clearTimeout(this.helperReadyTimer)
++    if (this.feedbackTimer !== undefined) clearTimeout(this.feedbackTimer)
++    if (this.wheelOpenAck !== undefined) {
++      clearTimeout(this.wheelOpenAck.timer)
++      this.wheelOpenAck.reject(new Error('轮盘已随应用关闭'))
++      this.wheelOpenAck = undefined
++    }
++    this.pending.length = 0
++    if (this.overlay !== undefined && !this.overlay.isDestroyed()) this.overlay.destroy()
++    this.overlay = undefined
++    if (this.feedbackOverlay !== undefined && !this.feedbackOverlay.isDestroyed()) this.feedbackOverlay.destroy()
++    this.feedbackOverlay = undefined
++    this.pendingCapture = undefined
++    this.captureChild?.kill('SIGTERM')
++    for (const channel of [
++      QUICK_HELP_IPC.environment, QUICK_HELP_IPC.show, QUICK_HELP_IPC.feedback,
++      QUICK_HELP_IPC.captureSelection, QUICK_HELP_IPC.readCapture, QUICK_HELP_IPC.discardCapture, QUICK_HELP_IPC.hide,
++      QUICK_HELP_IPC.stageCapture,
++      QUICK_HELP_IPC.dragWindow,
++      QUICK_HELP_IPC.focusMain, QUICK_HELP_IPC.probeHotkey, QUICK_HELP_IPC.configure,
++      QUICK_HELP_IPC.suspend, QUICK_HELP_IPC.rendererReady,
++    ]) {
++      ipcMain.removeHandler(channel)
++    }
++  }
++
++  /** Create the overlay window once, confined to this feature's own routes. */
++  private ensureOverlay(): BrowserWindow {
++    if (this.overlay !== undefined && !this.overlay.isDestroyed()) return this.overlay
++    const window = new BrowserWindow({
++      show: false,
++      frame: false,
++      transparent: true,
++      resizable: false,
++      movable: false,
++      minimizable: false,
++      maximizable: false,
++      fullscreenable: false,
++      hasShadow: false,
++      skipTaskbar: true,
++      // A normal floating level: high enough to sit above ordinary windows,
++      // without claiming to draw over system panels and other protected UI,
++      // which this window cannot honestly do.
++      alwaysOnTop: true,
++      // A utility window follows Spaces like a normal application window does,
++      // which is what makes it usable rather than pinned to one desktop.
++      type: 'panel',
++      webPreferences: {
++        // The bridge is what carries input events, the environment and window
++        // control to the page. It is loaded here and nowhere else, so no other
++        // document in the application can reach these channels.
++        preload: this.options.preloadPath,
++        contextIsolation: true,
++        nodeIntegration: false,
++        sandbox: true,
++        webviewTag: false,
++        // These three same-origin overlay pages play the user's selected LoL
++        // sound from native-input IPC, which does not create a DOM user gesture.
++        // Keep the exception scoped to this dedicated BrowserWindow.
++        autoplayPolicy: 'no-user-gesture-required',
++      },
++    })
++    // The window may only ever show this feature's own plugin pages.
++    window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
++    window.webContents.on('will-navigate', (navigationEvent, url) => {
++      if (!this.isOwnPage(url)) navigationEvent.preventDefault()
++    })
++    // A document load is not a listener-ready signal: wheel.js still needs to
++    // fetch its view and attach DSH.onInput. Reset readiness before navigation,
++    // never after the renderer may already have completed its handshake.
++    window.webContents.on('did-start-loading', () => {
++      if (this.overlay !== window) return
++      this.overlayLoading = true
++      this.overlayReady = false
++    })
++    window.webContents.on('did-finish-load', () => {
++      if (this.overlay !== window) return
++      this.overlayLoading = false
++      if (this.overlayRoute !== QUICK_HELP_ROUTE_PATH.wheel) return
++      if (this.overlayReadyTimer !== undefined) clearTimeout(this.overlayReadyTimer)
++      this.overlayReadyTimer = setTimeout(() => {
++        this.overlayReadyTimer = undefined
++        if (this.overlay !== window || this.overlayReady || this.overlayRoute !== QUICK_HELP_ROUTE_PATH.wheel) return
++        if (this.overlayReadyAttempts < 3) {
++          this.overlayReadyAttempts += 1
++          const opening = this.pending.find(event => event.type === 'wheelOpen')
++          const autoHideMs = this.testWheelAutoHideMs
++          this.overlayRoute = undefined
++          this.loadWheelPage(opening, autoHideMs)
++          return
++        }
++        this.options.onStatus?.('crashed', 'wheel renderer did not become ready after 4 page loads')
++        this.overlayRoute = undefined
++        this.pending.length = 0
++        window.setIgnoreMouseEvents(true, { forward: true })
++        window.hide()
++        this.rejectWheelOpen(new Error('轮盘页面连续加载后仍未就绪；请检查 quick-help 页面和 Host 路由。'))
++      }, 2_000)
++    })
++    window.webContents.on('did-fail-load', (_event, code, description, url, isMainFrame) => {
++      // A failed load leaves no renderer to drain into; holding the events would
++      // replay stale input into whatever document loads next.
++      if (this.overlay !== window) return
++      if (isMainFrame === false) return
++      let path = 'unknown'
++      try { path = new URL(url).pathname } catch (error) { void error }
++      console.warn(`[quick-help] main-frame load failed (${code}): ${description} [${path}]`)
++      this.options.onStatus?.('crashed', `wheel page load failed (${code}): ${description} [${path}]`)
++      this.overlayReady = false
++      this.overlayLoading = false
++      if (this.overlayReadyTimer !== undefined) clearTimeout(this.overlayReadyTimer)
++      this.overlayReadyTimer = undefined
++      this.pending.length = 0
++      this.overlayRoute = undefined
++      this.overlayState = undefined
++      window.setIgnoreMouseEvents(true, { forward: true })
++      window.hide()
++      this.rejectWheelOpen(new Error(`轮盘页面加载失败 (${code}): ${description}`))
++    })
++    window.on('moved', () => { this.rememberAskMove(window) })
++    window.on('closed', () => {
++      if (this.overlay !== window) return
++      this.overlay = undefined
++      this.overlayRoute = undefined
++      this.overlayState = undefined
++      this.overlayReady = false
++      this.pending.length = 0
++    })
++    this.overlay = window
++    return window
++  }
++
++  /** Record a real chat drag, excluding programmatic placement and wheel motion. */
++  private rememberAskMove(window: BrowserWindow): void {
++    if (this.overlay !== window || this.overlayRoute !== QUICK_HELP_ROUTE_PATH.ask || !window.isVisible()) return
++    const bounds = window.getBounds()
++    if (bounds.x === this.programmedBounds?.x && bounds.y === this.programmedBounds.y) return
++    this.askPosition = { x: bounds.x, y: bounds.y }
++    if (this.positionWriteTimer !== undefined) clearTimeout(this.positionWriteTimer)
++    this.positionWriteTimer = setTimeout(() => {
++      this.positionWriteTimer = undefined
++      this.saveAskPosition()
++    }, 200)
++  }
++
++  /** Persist the last drag without delaying the window's move event. */
++  private saveAskPosition(): void {
++    if (this.options.askPositionPath === undefined || this.askPosition === undefined) return
++    try { writeAskPosition(this.options.askPositionPath, this.askPosition) } catch (error) {
++      console.warn('[quick-help] could not save chat window position', error)
++    }
++  }
++
++  /** Release buffered input only after the wheel renderer has subscribed. */
++  private markRendererReady(): void {
++    if (this.overlayRoute === QUICK_HELP_ROUTE_PATH.ask && this.options.compactChat) {
++      this.overlayReady = true
++      const feedback = this.pendingCompactFeedback
++      this.pendingCompactFeedback = undefined
++      if (feedback) this.showFeedback(feedback)
++      return
++    }
++    if (this.overlayRoute !== QUICK_HELP_ROUTE_PATH.wheel || this.overlay === undefined || this.overlay.isDestroyed()) return
++    console.info('[quick-help] wheel renderer ready')
++    if (this.overlayReadyTimer !== undefined) clearTimeout(this.overlayReadyTimer)
++    this.overlayReadyTimer = undefined
++    this.overlayReadyAttempts = 0
++    this.overlayReady = true
++    const queued = this.pending
++    this.pending = []
++    for (const event of queued) this.postToOverlay(this.overlay, QUICK_HELP_IPC.inputEvent, event)
++    if (this.statusWhileLoading !== undefined) {
++      const status = this.statusWhileLoading
++      this.statusWhileLoading = undefined
++      this.postToOverlay(this.overlay, QUICK_HELP_IPC.helperStatus, status)
++    }
++  }
++
++  /** Whether a URL is one of this feature's own plugin pages. */
++  private isOwnPage(url: string): boolean {
++    if (!url.startsWith(`${QUICK_HELP_ORIGIN}/`)) return false
++    const [path] = url.slice(QUICK_HELP_ORIGIN.length).split('?')
++    if (path !== undefined && Object.values(QUICK_HELP_ROUTE_PATH).includes(path)) return true
++    const parsed = new URL(url)
++    return this.compactSessionId !== undefined && parsed.pathname === '/' && parsed.searchParams.get('dshQuickHelpSession') === this.compactSessionId
++  }
++
++  /** Authentication and native actions accept only this exact compact top frame. */
++  ownsCompactSender(event: Pick<IpcMainInvokeEvent, 'sender' | 'senderFrame'>): boolean {
++    return this.ownsCompactWebContents(event.sender.id) && event.senderFrame === this.overlay?.webContents.mainFrame
++  }
++
++  /** Identify the compact Client when authenticating its Host WebSocket. */
++  ownsCompactWebContents(id: number | undefined): boolean {
++    const window = this.overlay
++    return !!window && !window.isDestroyed() && window.webContents.id === id
++      && this.overlayRoute === QUICK_HELP_ROUTE_PATH.ask && !!this.compactSessionId
++      && this.isOwnPage(window.webContents.getURL()) && new URL(window.webContents.getURL()).pathname === '/'
++  }
++
++  /**
++   * Reject any sender that is not this feature's own overlay.
++   *
++   * Comparing the webContents rather than the URL is deliberate: the main window
++   * serves the same origin, and it has no business registering global shortcuts
++   * or reading the helper's state on this feature's behalf.
++   */
++  private assertOverlaySender(event: IpcMainInvokeEvent): void {
++    const window = this.overlay
++    if (window === undefined || window.isDestroyed()) throw new Error('quick help: no overlay window')
++    if (event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame) {
++      throw new Error('quick help: rejected unowned renderer')
++    }
++  }
++
++  /** Spawn the helper, unless it is already running. */
++  private start(): void {
++    if (this.helper !== undefined || this.disposed) return
++    if (!this.supported) {
++      this.setStatus('unsupported')
++      return
++    }
++    this.setStatus('starting')
++    let child: ChildProcess
++    try {
++      child = spawn(this.options.helperPath, [], { stdio: ['pipe', 'pipe', 'pipe'] })
++    } catch (error) {
++      this.setStatus('crashed', error instanceof Error ? error.message : String(error))
++      return
++    }
++    this.helper = child
++    if (this.helperReadyTimer !== undefined) clearTimeout(this.helperReadyTimer)
++    this.helperReadyTimer = setTimeout(() => {
++      if (this.helper !== child || this.status === 'running' || this.status === 'no-access') return
++      this.timedOutHelper = child
++      this.setStatus('crashed', '输入助手未在 5 秒内报告事件监听就绪；请检查设备控制权限后重试。')
++      try { child.stdin?.end('{"type":"shutdown"}\n') } catch { child.kill('SIGTERM') }
++      const escalate = setTimeout(() => { if (this.helper === child) child.kill('SIGKILL') }, 1500)
++      child.once('exit', () => clearTimeout(escalate))
++    }, 5_000)
++    this.helperBuffer.text = ''
++    child.stdout?.setEncoding('utf8')
++    child.stdout?.on('data', (chunk: string) => {
++      if (this.helper === child && this.retryingHelper !== child && this.timedOutHelper !== child) this.consume(chunk)
++    })
++    child.stderr?.setEncoding('utf8')
++    child.stderr?.on('data', (chunk: string) => {
++      if (this.helper === child && this.retryingHelper !== child && this.timedOutHelper !== child) {
++        this.options.onStatus?.('crashed', chunk.trim().slice(0, 400))
++      }
++    })
++    child.on('error', (error) => {
++      if (this.helper !== child) return
++      if (this.helperReadyTimer !== undefined) clearTimeout(this.helperReadyTimer)
++      this.helper = undefined
++      if (this.retryingHelper === child) {
++        this.retryingHelper = undefined
++        if (!this.disposed) { this.start(); void this.syncHelperConfig() }
++        return
++      }
++      this.setStatus('crashed', error.message)
++    })
++    child.on('exit', (code, signal) => {
++      if (this.helper !== child) return
++      if (this.helperReadyTimer !== undefined) clearTimeout(this.helperReadyTimer)
++      this.helper = undefined
++      if (this.retryingHelper === child) {
++        this.retryingHelper = undefined
++        if (!this.disposed) {
++          this.start()
++          void this.syncHelperConfig()
++        }
++        return
++      }
++      if (this.timedOutHelper === child) {
++        this.timedOutHelper = undefined
++        return
++      }
++      if (this.disposed) {
++        this.setStatus('stopped')
++        return
++      }
++      // A missing permission is not a crash: the helper says so and exits, and
++      // restarting it would only produce the same answer forever.
++      if (this.status === 'no-access') {
++        this.setStatus('no-access')
++        return
++      }
++      const now = Date.now()
++      if (now - this.restartWindowStart > 60_000) {
++        this.restartWindowStart = now
++        this.restarts = 0
++      }
++      this.restarts += 1
++      if (this.restarts > this.restartBudget) {
++        this.setStatus('crashed', `输入助手连续退出（code=${String(code)} signal=${String(signal)}），已停止重启。`)
++        return
++      }
++      this.setStatus('stopped')
++      // Backing off matters: a helper that cannot start fails immediately, and an
++      // instant restart turns that into a spin.
++      setTimeout(() => {
++        if (!this.disposed) this.start()
++      }, 500 * 2 ** (this.restarts - 1))
++    })
++  }
++
++  /** Shut the helper down, making sure the event tap really goes away. */
++  private stop(): void {
++    const child = this.helper
++    this.helper = undefined
++    if (child === undefined) return
++    try {
++      child.stdin?.write('{"type":"shutdown"}\n')
++      child.stdin?.end()
++    } catch {
++      // The pipe may already be gone; the kill below is the guarantee.
++    }
++    // SIGTERM lets the helper remove its tap cleanly. If it does not go, it is
++    // killed: a surviving tap would keep swallowing input with no reader.
++    const escalate = setTimeout(() => {
++      try { child.kill('SIGKILL') } catch { /* already gone */ }
++    }, 1500)
++    child.once('exit', () => clearTimeout(escalate))
++  }
++
++  /** Read whole lines out of the helper's stdout. */
++  private consume(chunk: string): void {
++    this.helperBuffer.text += chunk
++    let index = this.helperBuffer.text.indexOf('\n')
++    while (index !== -1) {
++      const line = this.helperBuffer.text.slice(0, index)
++      this.helperBuffer.text = this.helperBuffer.text.slice(index + 1)
++      this.handleLine(line)
++      index = this.helperBuffer.text.indexOf('\n')
++    }
++    // A helper that dies mid-line leaves a tail; drop it rather than letting it
++    // prefix the next helper's first message.
++    if (this.helperBuffer.text.length > 4096) this.helperBuffer.text = ''
++  }
++
++  /** Interpret one helper message. Unrecognised lines are ignored. */
++  private handleLine(line: string): void {
++    const trimmed = line.trim()
++    if (!trimmed.startsWith('{')) return
++    let value: Record<string, unknown>
++    try {
++      value = JSON.parse(trimmed) as Record<string, unknown>
++    } catch {
++      return
++    }
++    const type = value.type
++    if (type === 'ready') {
++      if (this.helperReadyTimer !== undefined) clearTimeout(this.helperReadyTimer)
++      this.restarts = 0
++      if (this.lastHelperConfig !== undefined) this.writeHelper({ type: 'config', ...this.lastHelperConfig })
++      this.setStatus('running')
++      return
++    }
++    if (type === 'bye') {
++      this.setStatus('stopped')
++      return
++    }
++    if (type === 'error') {
++      if (this.helperReadyTimer !== undefined) clearTimeout(this.helperReadyTimer)
++      const code = typeof value.code === 'string' ? value.code : 'error'
++      const message = typeof value.message === 'string' ? value.message : ''
++      this.setStatus(code === 'no_access' ? 'no-access' : 'crashed', message)
++      this.emitInput({ type: 'error', code, message })
++      return
++    }
++    if (type === 'wheelOpen' || type === 'wheelMove' || type === 'wheelRelease' || type === 'cancel') {
++      const input: QuickHelpInputEvent = {
++        type,
++        ...typeof value.x === 'number' ? { x: value.x } : {},
++        ...typeof value.y === 'number' ? { y: value.y } : {},
++      }
++      if (type === 'wheelOpen' && this.overlayRoute !== QUICK_HELP_ROUTE_PATH.wheel) {
++        this.loadWheelPage(input)
++        return
++      }
++      this.emitInput(input)
++    }
++  }
++
++  /** Load and show the persistent wheel page, optionally replaying its opening input. */
++  private loadWheelPage(opening?: QuickHelpInputEvent, autoHideMs?: number): void {
++    if (!this.supported || this.disposed) return
++    const path = QUICK_HELP_ROUTE_PATH.wheel
++    const window = this.ensureOverlay()
++    // Never expose the overlay's default Electron bounds while the wheel page is
++    // loading or calculating its position. A stalled renderer would otherwise
++    // leave a transparent, always-on-top 800×600 window intercepting clicks in
++    // other applications.
++    window.setIgnoreMouseEvents(true, { forward: true })
++    window.hide()
++    if (this.testWheelTimer !== undefined) {
++      clearTimeout(this.testWheelTimer)
++      this.testWheelTimer = undefined
++    }
++    if (autoHideMs !== undefined) this.testWheelAutoHideMs = autoHideMs
++    if (this.options.hostEndpoint !== undefined && this.options.hostEndpoint() === undefined) {
++      if (opening !== undefined && this.pending.length < 8) this.pending.push(opening)
++      this.overlayRoute = undefined
++      return
++    }
++    if (this.overlayLoading && this.overlayRoute === path) {
++      if (opening !== undefined && this.pending.length < 8) this.pending.push(opening)
++      return
++    }
++    if (this.overlayRoute !== path || this.overlayState !== undefined || !this.overlayReady) {
++      this.overlayRoute = path
++      this.overlayState = undefined
++      this.overlayReady = false
++      this.overlayLoading = true
++      this.pending.length = 0
++      if (opening !== undefined) this.pending.push(opening)
++      void window.loadURL(`${QUICK_HELP_ORIGIN}${path}`).catch((error: unknown) => {
++        this.overlayLoading = false
++        this.overlayRoute = undefined
++        this.options.onStatus?.('crashed', error instanceof Error ? error.message : String(error))
++        this.rejectWheelOpen(error instanceof Error ? error : new Error(String(error)))
++      })
++    } else if (opening !== undefined) {
++      this.emitInput(opening)
++    }
++  }
++
++  /** Reject and clear the current panel request when its renderer cannot show. */
++  private rejectWheelOpen(error: Error): void {
++    const pending = this.wheelOpenAck
++    if (pending === undefined) return
++    clearTimeout(pending.timer)
++    this.wheelOpenAck = undefined
++    pending.reject(error)
++  }
++
++  /** Update the status and tell the overlay, which persists it for the panel. */
++  private setStatus(status: HelperStatus, detail?: string): void {
++    this.status = status
++    this.options.onStatus?.(status, detail)
++    const overlay = this.overlay
++    if (overlay === undefined || overlay.isDestroyed()) return
++    if (!this.overlayReady) {
++      // The overlay has not loaded yet; deliver once it can receive.
++      this.statusWhileLoading = status
++      return
++    }
++    this.postToOverlay(overlay, QUICK_HELP_IPC.helperStatus, status)
++  }
++
++  /** Deliver one input event, or hold it until the document can receive it. */
++  private emitInput(event: QuickHelpInputEvent): void {
++    const overlay = this.overlay
++    if (overlay === undefined || overlay.isDestroyed()) return
++    if (!this.overlayReady) {
++      // A burst while loading is kept, but bounded: a hotkey the user mashed
++      // during a slow first load must not replay as several wheel openings.
++      if (this.pending.length < 8) this.pending.push(event)
++      return
++    }
++    this.postToOverlay(overlay, QUICK_HELP_IPC.inputEvent, event)
++  }
++
++  /** Write one JSON line to the input helper. */
++  private writeHelper(payload: unknown): void {
++    try {
++      this.helper?.stdin?.write(`${JSON.stringify(payload)}\n`)
++    } catch (error) {
++      this.options.onStatus?.('crashed', error instanceof Error ? error.message : String(error))
++    }
++  }
++
++  /** Post one IPC message to a window, tolerating a window that just closed. */
++  private postToOverlay(window: BrowserWindow | undefined, channel: string, payload: unknown): void {
++    if (window === undefined || window.isDestroyed()) return
++    try {
++      window.webContents.send(channel, payload)
++    } catch {
++      // The window closed between the check and the send; nothing to recover.
++    }
++  }
++}
++
++/**
++ * Absolute path of the compiled input helper.
++ *
++ * Two layouts, and picking the wrong one produces a helper that cannot start:
++ * packaged builds carry it as an extra resource, while a dev run has it beside
++ * the sources. The existence check is the honest way to tell them apart — there
++ * is no build-time flag here that could drift from what the packager actually
++ * did.
++ *
++ * @param appRoot - `app.getAppPath()`.
++ * @returns The packaged path, or the development path when that is the one present.
++ */
++export function quickHelpHelperPath(appRoot: string, packaged: boolean): string {
++  if (!packaged) return join(process.env.DSH_QUICK_HELP_ROOT ?? join(appRoot, '..', '..', '..', 'lolping4dsh'), 'build', 'input-helper')
++  return join(process.resourcesPath, 'quick-help', 'input-helper')
++}
+diff --git a/apps/desktop/tests/quick-help.spec.ts b/apps/desktop/tests/quick-help.spec.ts
+new file mode 100644
+--- /dev/null
++++ b/apps/desktop/tests/quick-help.spec.ts
+@@ -0,0 +1,486 @@
++import { EventEmitter } from 'node:events'
++import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
++import { tmpdir } from 'node:os'
++import { join } from 'node:path'
++import { afterEach, beforeEach, expect, it, vi } from 'vitest'
++import type { BrowserWindowConstructorOptions, WebContents } from 'electron'
++import { globalShortcut, ipcMain, screen, systemPreferences } from 'electron'
++import { QuickHelpDesktop } from '../src/quick-help.ts'
++import { QUICK_HELP_IPC } from '../src/quick-help-ipc.ts'
++import { forwardWebRequest } from '../src/web-document.ts'
++import { createElectronBuilderConfig } from '../scripts/electron-builder-config.mjs'
++
++const native = vi.hoisted(() => ({ create: vi.fn<(options: BrowserWindowConstructorOptions) => object>() }))
++const helperProcess = vi.hoisted(() => ({ spawn: vi.fn() }))
++vi.mock('node:child_process', async (importOriginal) => ({
++  ...await importOriginal<typeof import('node:child_process')>(),
++  spawn: helperProcess.spawn,
++}))
++vi.mock('electron', () => ({
++  BrowserWindow: function (options: BrowserWindowConstructorOptions) { return native.create(options) },
++  globalShortcut: { register: vi.fn(() => true), unregister: vi.fn() },
++  ipcMain: { handle: vi.fn(), removeHandler: vi.fn() },
++  screen: {
++    getCursorScreenPoint: () => ({ x: 400, y: 300 }), getAllDisplays: () => [],
++    getDisplayNearestPoint: () => ({ workArea: { x: 0, y: 0, width: 1000, height: 800 } }),
++  },
++  systemPreferences: { isTrustedAccessibilityClient: () => true, getMediaAccessStatus: () => 'granted' },
++}))
++vi.mock('../src/web-document.ts', () => ({ forwardWebRequest: vi.fn() }))
++
++afterEach(() => {
++  vi.useRealTimers()
++  vi.restoreAllMocks()
++})
++
++beforeEach(() => {
++  vi.mocked(forwardWebRequest).mockReset()
++  helperProcess.spawn.mockReset()
++  vi.mocked(ipcMain.handle).mockClear()
++  vi.mocked(ipcMain.removeHandler).mockClear()
++  vi.mocked(globalShortcut.register).mockClear()
++})
++
++function helperFixture() {
++  const child = Object.assign(new EventEmitter(), {
++    stdin: { end: vi.fn(), write: vi.fn() },
++    stdout: Object.assign(new EventEmitter(), { setEncoding: vi.fn() }),
++    stderr: Object.assign(new EventEmitter(), { setEncoding: vi.fn() }),
++    kill: vi.fn(),
++  })
++  helperProcess.spawn.mockReturnValueOnce(child)
++  return child
++}
++
++it('retries a permission-failed helper only after the old process exits', () => {
++  vi.useFakeTimers()
++  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
++  const first = helperFixture()
++  const second = helperFixture()
++  const desktop = new QuickHelpDesktop({ helperPath: '/unused/input-helper', preloadPath: '/unused/preload.cjs' })
++  const config = { triggerVk: 59, modifierMask: 0, holdMode: 1 as const, dragThreshold: 12, watchdogMs: 12_000, enabled: 1 as const }
++  desktop.configure(config)
++  first.stdout.emit('data', '{"type":"error","code":"no_access","message":"permission"}\n')
++  expect(desktop.helperStatus).toBe('no-access')
++
++  desktop.retry()
++  expect(first.stdin.end).toHaveBeenCalledWith('{"type":"shutdown"}\n')
++  expect(helperProcess.spawn).toHaveBeenCalledTimes(1)
++  first.stdout.emit('data', '{"type":"bye"}\n')
++  expect(desktop.helperStatus).toBe('starting')
++  first.emit('exit', 0, null)
++  expect(helperProcess.spawn).toHaveBeenCalledTimes(2)
++  second.stdout.emit('data', '{"type":"ready"}\n')
++  expect(desktop.helperStatus).toBe('running')
++  first.stdout.emit('data', '{"type":"error","code":"no_access"}\n')
++  expect(desktop.helperStatus).toBe('running')
++  desktop.dispose()
++})
++
++it('reports a helper that never reaches ready instead of staying in starting', () => {
++  vi.useFakeTimers()
++  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
++  const child = helperFixture()
++  const details: string[] = []
++  const desktop = new QuickHelpDesktop({
++    helperPath: '/unused/input-helper', preloadPath: '/unused/preload.cjs',
++    onStatus: (_status, detail) => { if (detail !== undefined) details.push(detail) },
++  })
++  desktop.configure({ triggerVk: 59, modifierMask: 0, holdMode: 1, dragThreshold: 12, watchdogMs: 12_000, enabled: 1 })
++  vi.advanceTimersByTime(5_000)
++  expect(desktop.helperStatus).toBe('crashed')
++  expect(details.some(detail => detail.includes('5 秒'))).toBe(true)
++  child.stdout.emit('data', '{"type":"bye"}\n')
++  expect(desktop.helperStatus).toBe('crashed')
++  child.emit('exit', 0, null)
++  expect(desktop.helperStatus).toBe('crashed')
++  expect(helperProcess.spawn).toHaveBeenCalledTimes(1)
++  desktop.dispose()
++})
++
++it('shows accepted feedback in a separate click-through window without moving the chat', async () => {
++  vi.useFakeTimers()
++  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
++  const chat = overlayFixture()
++  const desktop = new QuickHelpDesktop({ helperPath: '/unused/input-helper', preloadPath: '/unused/preload.cjs' })
++  desktop.install()
++  desktop.show({ route: 'ask', focusable: true })
++  const chatBounds = chat.getBounds()
++  const effect = overlayFixture()
++  const handler = vi.mocked(ipcMain.handle).mock.calls.find(([channel]) => channel === QUICK_HELP_IPC.feedback)?.[1]
++  handler?.({ sender: chat.webContents, senderFrame: chat.webContents.mainFrame } as never, {
++    kind: 'ping', image: '/quick-help/asset/textures/assist_me.png',
++    sound: '/quick-help/asset/sounds/ComeHere.wav', volume: 0.5, x: 500, y: 400,
++  })
++  await Promise.resolve()
++  expect(effect.setIgnoreMouseEvents).toHaveBeenCalledWith(true, { forward: true })
++  expect(effect.showInactive).toHaveBeenCalledOnce()
++  expect(native.create).toHaveBeenLastCalledWith(expect.objectContaining({ type: 'panel', focusable: false, webPreferences: expect.objectContaining({ preload: '/unused/preload.cjs' }) }))
++  expect(chat.getBounds()).toEqual(chatBounds)
++  const effectBounds = effect.getBounds()
++  expect(effectBounds.width).toBe(160)
++  expect(effectBounds.height).toBe(160)
++  expect(effectBounds.x + 80).toBe(500)
++  expect(effectBounds.y + 80).toBe(400)
++  expect(effect.loadURL).toHaveBeenCalledWith(expect.stringContaining('/quick-help/feedback?state='))
++  expect(effect.webContents.send).toHaveBeenCalledWith(QUICK_HELP_IPC.feedbackShown, 1)
++  const ready = vi.mocked(ipcMain.handle).mock.calls.find(([channel]) => channel === QUICK_HELP_IPC.feedbackReady)?.[1]
++  expect(() => ready?.({ sender: chat.webContents, senderFrame: chat.webContents.mainFrame } as never, 1)).toThrow('rejected feedback')
++  ready?.({ sender: effect.webContents, senderFrame: effect.webContents.mainFrame } as never, 1)
++  vi.advanceTimersByTime(4_200)
++  expect(effect.hide).toHaveBeenCalledOnce()
++  desktop.dispose()
++})
++
++let fixtureWindowId = 1
++
++it('anchors selected media at the gesture and opens the chat beside it instead of its previous position', async () => {
++  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
++  const chat = overlayFixture()
++  const desktop = new QuickHelpDesktop({ helperPath: '/unused/input-helper', preloadPath: '/unused/preload.cjs' })
++  desktop.show({ route: 'ask', focusable: true, bounds: { x: 100, y: 100, width: 360, height: 400 } })
++  const effect = overlayFixture()
++  desktop.show({ route: 'ask', focusable: true, feedback: {
++    kind: 'emote', image: '/quick-help/asset/emotes/Unworthy.png', volume: 0.5, x: 500, y: 400,
++  } })
++  await Promise.resolve()
++  expect(effect.getBounds()).toEqual({ x: 420, y: 320, width: 160, height: 160 })
++  expect(chat.getBounds()).toEqual({ x: 577, y: 364, width: 360, height: 400 })
++  desktop.show({ route: 'ask', focusable: true })
++  expect(chat.getBounds()).toEqual({ x: 577, y: 364, width: 360, height: 400 })
++  desktop.dispose()
++})
++
++it('does not replay selection media when its later action acknowledgement opens the chat', async () => {
++  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
++  const chat = overlayFixture()
++  const desktop = new QuickHelpDesktop({ helperPath: '/unused/input-helper', preloadPath: '/unused/preload.cjs' })
++  desktop.install()
++  desktop.show({ route: 'ask', focusable: true })
++  const effect = overlayFixture()
++  const media = { id: 'one-selection', kind: 'ping' as const, image: '/quick-help/asset/textures/assist_me.png', volume: 0.5, x: 500, y: 400 }
++  const handler = vi.mocked(ipcMain.handle).mock.calls.find(([channel]) => channel === QUICK_HELP_IPC.feedback)?.[1]
++  handler?.({ sender: chat.webContents, senderFrame: chat.webContents.mainFrame } as never, media)
++  await Promise.resolve()
++  desktop.show({ route: 'ask', focusable: true, feedback: media })
++  expect(effect.loadURL).toHaveBeenCalledOnce()
++  expect(chat.getBounds().x).toBe(564)
++  desktop.dispose()
++})
++
++function overlayFixture() {
++  const visibility = { visible: false }
++  let bounds = { x: 0, y: 0, width: 800, height: 600 }
++  const webContents = Object.assign(new EventEmitter(), {
++    id: fixtureWindowId++, getURL: () => window.loadURL.mock.lastCall?.[0] ?? '',
++    setWindowOpenHandler: vi.fn(), send: vi.fn(), isDestroyed: () => false, mainFrame: {},
++  }) as EventEmitter & Pick<WebContents, 'setWindowOpenHandler' | 'send' | 'isDestroyed'> & { mainFrame: object }
++  const window = Object.assign(new EventEmitter(), {
++    webContents,
++    destroyed: false,
++    loadURL: vi.fn(async (_url: string) => {}),
++    setBounds: vi.fn((next: typeof bounds) => { bounds = next }), getBounds: vi.fn(() => bounds),
++    setMovable: vi.fn(), setFocusable: vi.fn(), setIgnoreMouseEvents: vi.fn(), setVibrancy: vi.fn(), setBackgroundColor: vi.fn(),
++    show: vi.fn(() => { visibility.visible = true }),
++    showInactive: vi.fn(() => { visibility.visible = true }),
++    hide: vi.fn(() => { visibility.visible = false }), focus: vi.fn(),
++    isDestroyed: () => window.destroyed, isVisible: vi.fn(() => visibility.visible), destroy: vi.fn(),
++  })
++  native.create.mockReturnValue(window)
++  return window
++}
++
++it('opens a preset-composed compact Client and confines native access to its exact top frame', async () => {
++  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
++  const chat = overlayFixture()
++  vi.mocked(forwardWebRequest).mockResolvedValue(new Response(JSON.stringify({ sessionId: 'quick-safe' })))
++  const desktop = new QuickHelpDesktop({ helperPath: '/unused/input-helper', preloadPath: '/unused/preload.cjs', compactChat: true, hostEndpoint: () => ({ host: 'http://127.0.0.1:12345', cookie: 'fixture' }) })
++  await desktop.show({ route: 'ask', focusable: true })
++  expect(vi.mocked(forwardWebRequest).mock.calls[0]?.[0].url).toContain('/api/compact-session')
++  expect(chat.loadURL).toHaveBeenCalledWith('dsh-app://app/?dshQuickHelpSession=quick-safe')
++  expect(desktop.ownsCompactSender({ sender: chat.webContents, senderFrame: chat.webContents.mainFrame } as never)).toBe(true)
++  expect(desktop.ownsCompactSender({ sender: chat.webContents, senderFrame: {} } as never)).toBe(false)
++  expect(desktop.ownsCompactWebContents(undefined)).toBe(false)
++  const navigation = { preventDefault: vi.fn() }
++  chat.webContents.emit('will-navigate', navigation, 'dsh-app://app/?dshQuickHelpSession=another-session')
++  expect(navigation.preventDefault).toHaveBeenCalledOnce()
++  desktop.show({ route: 'settings' })
++  expect(desktop.ownsCompactSender({ sender: chat.webContents, senderFrame: chat.webContents.mainFrame } as never)).toBe(false)
++  desktop.dispose()
++})
++
++it('keeps the overlay hidden and click-through until the renderer sets the wheel bounds', async () => {
++  vi.useFakeTimers()
++  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
++  const window = overlayFixture()
++  const desktop = new QuickHelpDesktop({ helperPath: '/unused/input-helper', preloadPath: '/unused/preload.cjs' })
++
++  const opened = desktop.openWheel()
++  expect(window.hide).toHaveBeenCalledOnce()
++  expect(window.setIgnoreMouseEvents).toHaveBeenLastCalledWith(true, { forward: true })
++  expect(window.showInactive).not.toHaveBeenCalled()
++
++  // A slow or stuck page never exposes Electron's default 800×600 rectangle.
++  vi.advanceTimersByTime(3_000)
++  expect(window.showInactive).not.toHaveBeenCalled()
++  window.webContents.emit('did-finish-load')
++  expect(window.showInactive).not.toHaveBeenCalled()
++  expect(window.webContents.send).not.toHaveBeenCalled()
++
++  // The renderer reveals the window only after it has computed its local bounds.
++  desktop.show({ route: 'wheel', bounds: { x: 260, y: 160, width: 280, height: 280 }, focusable: false, clickThrough: false })
++  await opened
++  expect(window.setBounds).toHaveBeenCalledWith({ x: 260, y: 160, width: 280, height: 280 })
++  expect(window.setIgnoreMouseEvents).toHaveBeenLastCalledWith(false, { forward: true })
++  expect(window.showInactive).toHaveBeenCalledOnce()
++  expect(window.hide).toHaveBeenCalledOnce()
++  vi.advanceTimersByTime(1_999)
++  expect(window.hide).toHaveBeenCalledOnce()
++  vi.advanceTimersByTime(1)
++  expect(window.hide).toHaveBeenCalledTimes(2)
++
++  desktop.hide()
++  expect(window.setIgnoreMouseEvents).toHaveBeenLastCalledWith(true, { forward: true })
++  expect(window.hide).toHaveBeenCalledTimes(3)
++  desktop.dispose()
++})
++
++it('flushes the first wheel opening only after the page subscribed to input', async () => {
++  vi.useFakeTimers()
++  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
++  const window = overlayFixture()
++  const desktop = new QuickHelpDesktop({ helperPath: '/unused/input-helper', preloadPath: '/unused/preload.cjs' })
++  desktop.install()
++  const opened = desktop.openWheel()
++  window.webContents.emit('did-finish-load')
++  expect(window.webContents.send).not.toHaveBeenCalled()
++
++  const readyHandler = vi.mocked(ipcMain.handle).mock.calls
++    .find(([channel]) => channel === QUICK_HELP_IPC.rendererReady)?.[1]
++  expect(readyHandler).toBeTypeOf('function')
++  readyHandler?.({
++    sender: window.webContents,
++    senderFrame: (window.webContents as unknown as { mainFrame: unknown }).mainFrame,
++  } as never)
++  expect(window.webContents.send).toHaveBeenCalledWith(
++    QUICK_HELP_IPC.inputEvent,
++    expect.objectContaining({ type: 'wheelOpen', x: 400, y: 300 }),
++  )
++  desktop.show({ route: 'wheel', bounds: { x: 260, y: 160, width: 280, height: 280 }, focusable: false, clickThrough: false })
++  await opened
++  desktop.dispose()
++})
++
++it('ignores a delayed hide from ask after the shared window has moved to wheel', async () => {
++  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
++  const window = overlayFixture()
++  const desktop = new QuickHelpDesktop({ helperPath: '/unused/input-helper', preloadPath: '/unused/preload.cjs' })
++  desktop.install()
++  desktop.show({ route: 'ask', focusable: true, clickThrough: false })
++  desktop.show({ route: 'wheel', bounds: { x: 100, y: 100, width: 314, height: 314 }, focusable: false, clickThrough: false })
++  const hidesBeforeStaleRequest = window.hide.mock.calls.length
++  const hideHandler = vi.mocked(ipcMain.handle).mock.calls
++    .find(([channel]) => channel === QUICK_HELP_IPC.hide)?.[1]
++  expect(hideHandler).toBeTypeOf('function')
++  hideHandler?.({
++    sender: window.webContents,
++    senderFrame: (window.webContents as unknown as { mainFrame: unknown }).mainFrame,
++  } as never, 'ask')
++  expect(window.hide).toHaveBeenCalledTimes(hidesBeforeStaleRequest)
++  desktop.dispose()
++})
++
++it('defers the initial wheel load until Host readiness and keeps readiness after load completion', async () => {
++  vi.useFakeTimers()
++  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
++  const window = overlayFixture()
++  let endpoint: { host: string; cookie: string } | undefined
++  const desktop = new QuickHelpDesktop({
++    helperPath: '/unused/input-helper', preloadPath: '/unused/preload.cjs',
++    hostEndpoint: () => endpoint,
++  })
++  desktop.install()
++  expect(window.loadURL).not.toHaveBeenCalled()
++
++  endpoint = { host: 'http://127.0.0.1:1234', cookie: 'session=fixture' }
++  desktop.hostReady()
++  expect(window.loadURL).toHaveBeenCalledOnce()
++  window.webContents.emit('did-start-loading')
++  const readyHandler = vi.mocked(ipcMain.handle).mock.calls
++    .find(([channel]) => channel === QUICK_HELP_IPC.rendererReady)?.[1]
++  readyHandler?.({
++    sender: window.webContents,
++    senderFrame: (window.webContents as unknown as { mainFrame: unknown }).mainFrame,
++  } as never)
++  window.webContents.emit('did-finish-load')
++
++  const opened = desktop.openWheel()
++  expect(window.loadURL).toHaveBeenCalledOnce()
++  expect(window.webContents.send).toHaveBeenCalledWith(
++    QUICK_HELP_IPC.inputEvent,
++    expect.objectContaining({ type: 'wheelOpen', x: 400, y: 300 }),
++  )
++  desktop.show({ route: 'wheel', bounds: { x: 260, y: 160, width: 280, height: 280 }, focusable: false, clickThrough: false })
++  await opened
++  desktop.dispose()
++})
++
++it('opens the ask chat in a compact pointer-adjacent window clamped to the display', () => {
++  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
++  const window = overlayFixture()
++  const desktop = new QuickHelpDesktop({ helperPath: '/unused/input-helper', preloadPath: '/unused/preload.cjs' })
++  desktop.show({ route: 'ask', focusable: true })
++  expect(window.setBounds).toHaveBeenCalledWith({ x: 418, y: 318, width: 360, height: 400 })
++  expect(window.setVibrancy).toHaveBeenCalledWith('under-window')
++  expect(window.show).toHaveBeenCalledOnce()
++  expect(window.setMovable).toHaveBeenCalledWith(true)
++  desktop.dispose()
++})
++
++it('remembers only a user drag, keeps it through ask refresh and wheel use, and restores it after restart', () => {
++  vi.useFakeTimers()
++  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
++  const directory = mkdtempSync(join(tmpdir(), 'dsh-quick-help-position-'))
++  const path = join(directory, 'quick-help', 'window-position.json')
++  try {
++    const window = overlayFixture()
++    const desktop = new QuickHelpDesktop({ helperPath: '/unused/input-helper', preloadPath: '/unused/preload.cjs', askPositionPath: path })
++    desktop.show({ route: 'ask', focusable: true })
++    window.emit('moved')
++    vi.advanceTimersByTime(250)
++    expect(() => readFileSync(path)).toThrow()
++
++    window.setBounds({ x: 120, y: 80, width: 360, height: 400 })
++    window.emit('moved')
++    vi.advanceTimersByTime(250)
++    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ x: 120, y: 80 })
++
++    desktop.show({ route: 'ask', bounds: { x: 500, y: 300, width: 360, height: 400 }, focusable: true })
++    expect(window.setBounds).toHaveBeenLastCalledWith({ x: 120, y: 80, width: 360, height: 400 })
++    desktop.show({ route: 'wheel', bounds: { x: 600, y: 300, width: 280, height: 280 }, focusable: false })
++    expect(window.setMovable).toHaveBeenLastCalledWith(false)
++    window.emit('moved')
++    desktop.dispose()
++
++    const nextWindow = overlayFixture()
++    const restarted = new QuickHelpDesktop({ helperPath: '/unused/input-helper', preloadPath: '/unused/preload.cjs', askPositionPath: path })
++    restarted.show({ route: 'ask', focusable: true })
++    expect(nextWindow.setBounds).toHaveBeenLastCalledWith({ x: 120, y: 80, width: 360, height: 400 })
++    restarted.dispose()
++  } finally { rmSync(directory, { recursive: true, force: true }) }
++})
++
++it('clamps a saved chat position to a remaining display', () => {
++  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
++  const window = overlayFixture()
++  vi.spyOn(screen, 'getDisplayNearestPoint').mockReturnValue({ workArea: { x: 100, y: 50, width: 320, height: 280 } } as never)
++  const desktop = new QuickHelpDesktop({ helperPath: '/unused/input-helper', preloadPath: '/unused/preload.cjs' })
++  desktop.show({ route: 'ask', bounds: { x: 900, y: 900, width: 360, height: 400 }, focusable: true })
++  expect(window.setBounds).toHaveBeenLastCalledWith({ x: 100, y: 50, width: 320, height: 280 })
++  desktop.dispose()
++})
++
++it('accepts a Control-only gesture without registering Control as a global shortcut', () => {
++  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
++  const desktop = new QuickHelpDesktop({ helperPath: '/unused/input-helper', preloadPath: '/unused/preload.cjs' })
++  expect(desktop.probeHotkey('Ctrl')).toMatchObject({ ok: true, available: true })
++  expect(desktop.probeHotkey('Control')).toMatchObject({ ok: true, available: true })
++  expect(globalShortcut.register).not.toHaveBeenCalled()
++  desktop.dispose()
++})
++
++it('hides a failed wheel load and leaves the failed window click-through', async () => {
++  vi.useFakeTimers()
++  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
++  const window = overlayFixture()
++  const desktop = new QuickHelpDesktop({ helperPath: '/unused/input-helper', preloadPath: '/unused/preload.cjs' })
++
++  const opened = desktop.openWheel().catch(() => undefined)
++  window.webContents.emit('did-fail-load')
++  expect(window.hide).toHaveBeenCalled()
++  expect(window.setIgnoreMouseEvents).toHaveBeenLastCalledWith(true, { forward: true })
++  desktop.dispose()
++  await opened
++})
++
++it('ships the sandboxed quick-help preload required by the overlay window', () => {
++  const config = createElectronBuilderConfig({
++    DSH_DESKTOP_APP_ID: 'com.example.quick-help',
++    DSH_DESKTOP_MANDATORY_UPDATE_TEST_ORIGIN: 'https://policy.example.com',
++    DSH_DESKTOP_MANDATORY_UPDATE_CONFIG: JSON.stringify({ allowedAuthOrigins: ['https://login.example.com'] }),
++    DSH_DESKTOP_TARGET_PLATFORM: 'darwin',
++    DSH_DESKTOP_TARGET_ARCH: 'arm64',
++    DSH_DESKTOP_UNSIGNED: '1',
++  }, 'darwin', 'arm64')
++  expect(config.files).toContain('lib/preload-quick-help.cjs')
++})
++
++it('keeps selected PNG bytes private to their owner and cleans the native selection file', async () => {
++  vi.useFakeTimers()
++  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
++  const window = overlayFixture()
++  const desktop = new QuickHelpDesktop({ helperPath: '/unused/input-helper', preloadPath: '/unused/preload.cjs' })
++  desktop.install()
++  desktop.show({ route: 'ask', focusable: true })
++  const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame }
++  const handler = (name: string) => vi.mocked(ipcMain.handle).mock.calls.find(call => call[0] === name)![1]
++  const child = helperFixture()
++  const pending = handler(QUICK_HELP_IPC.captureSelection)(event as never, 'session-a')
++  const invocation = helperProcess.spawn.mock.calls.at(-1)!
++  expect(invocation[0]).toBe('/usr/sbin/screencapture')
++  expect(invocation[2].env).toEqual({ PATH: '/usr/bin:/bin:/usr/sbin:/sbin' })
++  const path = invocation[1].at(-1) as string
++  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64')
++  writeFileSync(path, png)
++  child.emit('exit', 0)
++  await expect(pending).resolves.toBe('captured')
++  expect(existsSync(path)).toBe(false)
++  expect(await handler(QUICK_HELP_IPC.readCapture)(event as never, 'session-a')).toBe(`data:image/png;base64,${png.toString('base64')}`)
++  expect(await handler(QUICK_HELP_IPC.readCapture)(event as never, 'session-b')).toBeUndefined()
++  await handler(QUICK_HELP_IPC.discardCapture)(event as never)
++  expect(await handler(QUICK_HELP_IPC.readCapture)(event as never, 'session-a')).toBeUndefined()
++  desktop.dispose()
++})
++
++it('moves only the chat from actual cursor displacement and remembers its released position', async () => {
++  vi.useFakeTimers()
++  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
++  const directory = mkdtempSync(join(tmpdir(), 'dsh-chat-pointer-'))
++  const path = join(directory, 'window-position.json')
++  try {
++    const window = overlayFixture()
++    helperFixture()
++    const desktop = new QuickHelpDesktop({ helperPath: '/unused/input-helper', preloadPath: '/unused/preload.cjs', askPositionPath: path })
++    desktop.install()
++    desktop.show({ route: 'ask', focusable: true })
++    const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame }
++    const handler = vi.mocked(ipcMain.handle).mock.calls.find(call => call[0] === QUICK_HELP_IPC.dragWindow)![1]
++    vi.spyOn(screen, 'getCursorScreenPoint').mockReturnValue({ x: 400, y: 300 })
++    await handler(event as never, 'start')
++    vi.mocked(screen.getCursorScreenPoint).mockReturnValue({ x: 500, y: 350 })
++    await handler(event as never, 'move')
++    await handler(event as never, 'end')
++    expect(window.getBounds()).toEqual({ x: 518, y: 368, width: 360, height: 400 })
++    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ x: 518, y: 368 })
++    desktop.show({ route: 'wheel', bounds: { x: 0, y: 0, width: 600, height: 600 } })
++    await handler(event as never, 'start')
++    await handler(event as never, 'move')
++    expect(window.getBounds()).toEqual({ x: 0, y: 0, width: 600, height: 600 })
++    desktop.dispose()
++  } finally { rmSync(directory, { recursive: true, force: true }) }
++})
++
++it('reports denied screen access before spawning a screenshot process', async () => {
++  vi.useFakeTimers()
++  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
++  vi.spyOn(systemPreferences, 'getMediaAccessStatus').mockReturnValue('denied')
++  const window = overlayFixture()
++  helperFixture()
++  const desktop = new QuickHelpDesktop({ helperPath: '/unused/input-helper', preloadPath: '/unused/preload.cjs' })
++  desktop.install()
++  const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame }
++  const handler = vi.mocked(ipcMain.handle).mock.calls.find(call => call[0] === QUICK_HELP_IPC.captureSelection)![1]
++  await expect(handler(event as never, 'session-a')).rejects.toThrow('屏幕与系统音频录制')
++  expect(helperProcess.spawn).not.toHaveBeenCalled()
++  desktop.dispose()
++})
+diff --git a/apps/desktop/tests/quick-help-position.spec.ts b/apps/desktop/tests/quick-help-position.spec.ts
+new file mode 100644
+--- /dev/null
++++ b/apps/desktop/tests/quick-help-position.spec.ts
+@@ -0,0 +1,20 @@
++import { expect, it } from 'vitest'
++import { askBesideFeedback, feedbackBounds } from '../src/quick-help-position.ts'
++
++it('keeps the selection point unchanged on a display with a negative origin', () => {
++  const area = { x: -1440, y: -900, width: 1440, height: 900 }
++  const point = { x: -700, y: -500, kind: 'emote' as const }
++  expect(feedbackBounds(point, area)).toEqual({ x: -780, y: -580, width: 160, height: 160 })
++  const chat = askBesideFeedback(point, area)
++  expect(chat.x - (point.x + 65)).toBe(12)
++  expect(chat.y).toBe(-536)
++})
++
++it('flips the chat left at the right edge and clamps feedback only enough to stay visible', () => {
++  const area = { x: 0, y: 0, width: 1440, height: 900 }
++  const point = { x: 1435, y: 450, kind: 'ping' as const }
++  const effect = feedbackBounds(point, area)
++  const chat = askBesideFeedback(point, area)
++  expect(effect).toEqual({ x: 1280, y: 370, width: 160, height: 160 })
++  expect((effect.x + 80 - 52) - (chat.x + chat.width)).toBe(12)
++})
+diff --git a/packages/client/ui-conversation/src/client/compact.ts b/packages/client/ui-conversation/src/client/compact.ts
+new file mode 100644
+--- /dev/null
++++ b/packages/client/ui-conversation/src/client/compact.ts
+@@ -0,0 +1,5 @@
++/** Compact presentation is available only through the dedicated desktop preload. */
++export function isCompactConversation(): boolean {
++  const bridge = (globalThis as { __DSH_QUICK_HELP__?: { compactSessionId?(): string | undefined } }).__DSH_QUICK_HELP__
++  return !!bridge?.compactSessionId?.()
++}

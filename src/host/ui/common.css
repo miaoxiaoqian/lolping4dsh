@@ -1,0 +1,85 @@
+/*
+ * Shared styling for the three overlay windows.
+ *
+ * Self-contained on purpose: the overlay is served by this plugin's own HTTP
+ * mount, not by the app bundle, so it cannot import the renderer's stylesheets
+ * and must carry its own colour scheme. `color-scheme: light dark` plus a
+ * `prefers-color-scheme` block means the wheel reads correctly on both
+ * appearances without a theme switch.
+ */
+
+body {
+  color-scheme: light dark;
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', sans-serif;
+  --bg: #1c1f24;
+  --fg: #f2f4f6;
+  --dim: #9aa3ad;
+  --accent: #4aa3ff;
+  --line: #ffffff24;
+  --panel: #24282e;
+}
+
+@media (prefers-color-scheme: light) {
+  body {
+    --bg: #ffffff;
+    --fg: #0f1115;
+    --dim: #61666b;
+    --accent: #0a66ff;
+    --line: #0000001a;
+    --panel: #f4f5f7;
+  }
+}
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); }
+
+button {
+  font: inherit;
+  color: var(--fg);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+button:hover { background: var(--fg); color: var(--bg); }
+
+input, select, textarea {
+  font: inherit;
+  color: var(--fg);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+[hidden] { display: none !important; }
+
+.msg { padding: 8px 10px; border-radius: 8px; background: var(--panel); font-size: 12px; color: var(--fg); }
+.msg.warn { background: #4a2f22; color: #ffd8b0; }
+.msg.err { background: #4a2226; color: #ffc9c9; }
+.row { display: flex; gap: 6px; align-items: center; }
+.grow { flex: 1; min-width: 0; }
+.dim { color: var(--dim); }
+
+/*
+ * Preview and feedback media.
+ *
+ * Positioned rather than in flow: a preview must never reflow the wheel while
+ * the user's cursor is still hovering a slice, and the wheel must never cover the
+ * ask window's input box.
+ */
+.preview-media {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 180px;
+  height: 180px;
+  object-fit: contain;
+  pointer-events: none;
+  z-index: 10;
+}
+audio.preview-media { width: 1px; height: 1px; opacity: 0; }
